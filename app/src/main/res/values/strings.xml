@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Royal Ludo Game</string>
+    <string name="tagline_3d_atelier">3D Architectural Multiplayer Ludo</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="auth_subtitle">Sign in to create private 3D rooms, join live matchmaking, and track your career captures and victories.</string>
+    <string name="quick_match_title">Quick Online Match</string>
+    <string name="quick_match_desc">Join an open public room or launch a live table instantly.</string>
+    <string name="private_room_title">Private Room Code</string>
+    <string name="private_room_desc">Create a 6-character code or enter a friend\'s invite code.</string>
+    <string name="offline_studio_title">Offline 3D Studio</string>
+    <string name="offline_studio_desc">Play locally with Tactical AI Bots or Pass-and-Play.</string>
+    <string name="rules_button_label">Live Ludo Rules</string>
+    <string name="roll_dice_action">ROLL 3D DIE</string>
+    <string name="select_token_prompt">Tap a glowing 3D pawn on the board</string>
+    <string name="reset_camera_desc">Reset 3D Camera</string>
+    <string name="sign_out_label">Sign Out</string>
+</resources>

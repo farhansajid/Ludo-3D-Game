@@ -1,0 +1,8 @@
+{
+  "name": "Royal Ludo Game",
+  "description": "A minimalist 3D multiplayer Ludo board game with online matchmaking, private room codes, and interactive 3D camera controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

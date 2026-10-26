@@ -1,0 +1,185 @@
+{
+  "entities": {
+    "PlayerProfile": {
+      "title": "PlayerProfile",
+      "description": "Stores a player's profile identity and career Ludo statistics.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The authenticated Firebase UID of the player."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name shown in Ludo lobbies and turn banners."
+        },
+        "gamesPlayed": {
+          "type": "integer",
+          "description": "Total number of Ludo matches played."
+        },
+        "gamesWon": {
+          "type": "integer",
+          "description": "Total number of Ludo matches won."
+        },
+        "capturesTotal": {
+          "type": "integer",
+          "description": "Total opponent tokens captured across matches."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was last updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "gamesPlayed",
+        "gamesWon",
+        "capturesTotal",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LudoRoom": {
+      "title": "LudoRoom",
+      "description": "Represents an online multiplayer Ludo game room and its synchronized board state.",
+      "type": "object",
+      "properties": {
+        "hostUid": {
+          "type": "string",
+          "description": "UID of the player who created and hosts the room."
+        },
+        "roomCode": {
+          "type": "string",
+          "description": "6-character alphanumeric room invite code."
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Whether the room is discoverable in quick public matchmaking."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["WAITING", "PLAYING", "FINISHED"],
+          "description": "Lifecycle status of the room."
+        },
+        "maxPlayers": {
+          "type": "integer",
+          "description": "Maximum number of seats (2 to 4)."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "List of authenticated Firebase UIDs participating in this room."
+        },
+        "playerNames": {
+          "type": "array",
+          "description": "Display names of players seated in the room."
+        },
+        "playerColors": {
+          "type": "array",
+          "description": "Assigned Ludo colors (RED, GREEN, YELLOW, BLUE) for seated players."
+        },
+        "playerUids": {
+          "type": "array",
+          "description": "UIDs or bot identifiers aligned with playerColors."
+        },
+        "tokens": {
+          "type": "array",
+          "description": "16 integers representing positions of all 16 tokens (-1 in yard, 0..50 track, 51..56 home stretch, 57 finished)."
+        },
+        "currentTurnColor": {
+          "type": "string",
+          "enum": ["RED", "GREEN", "YELLOW", "BLUE"],
+          "description": "Color of the player whose turn is currently active."
+        },
+        "turnPhase": {
+          "type": "string",
+          "enum": ["ROLL", "MOVE", "GAME_OVER"],
+          "description": "Current phase within the active turn."
+        },
+        "diceValue": {
+          "type": "integer",
+          "description": "Current rolled die face (1..6, or 0 before first roll)."
+        },
+        "consecutiveSixes": {
+          "type": "integer",
+          "description": "Number of consecutive 6s rolled in the current turn (0..2)."
+        },
+        "turnNumber": {
+          "type": "integer",
+          "description": "Monotonically increasing turn counter."
+        },
+        "lastEvent": {
+          "type": "string",
+          "description": "Human-readable description of the latest move or rule event."
+        },
+        "reactionEmoji": {
+          "type": "string",
+          "description": "Latest quick emoji reaction sent by a player."
+        },
+        "reactionSender": {
+          "type": "string",
+          "description": "Display name or color of the player who sent the latest emoji reaction."
+        },
+        "winnerColor": {
+          "type": "string",
+          "enum": ["NONE", "RED", "GREEN", "YELLOW", "BLUE"],
+          "description": "First-place winner color, or NONE while match is in progress."
+        },
+        "winnerOrder": {
+          "type": "array",
+          "description": "Ordered list of player colors that have finished all 4 tokens."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the room was created via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the room was last updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "hostUid",
+        "roomCode",
+        "isPublic",
+        "status",
+        "maxPlayers",
+        "memberUids",
+        "playerNames",
+        "playerColors",
+        "playerUids",
+        "tokens",
+        "currentTurnColor",
+        "turnPhase",
+        "diceValue",
+        "consecutiveSixes",
+        "turnNumber",
+        "lastEvent",
+        "reactionEmoji",
+        "reactionSender",
+        "winnerColor",
+        "winnerOrder",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "PlayerProfile",
+      "description": "Stores each authenticated player's profile and Ludo career stats."
+    },
+    "/rooms/{roomId}": {
+      "schema": "LudoRoom",
+      "description": "Stores real-time multiplayer Ludo room state, board tokens, and turn synchronization."
+    }
+  }
+}

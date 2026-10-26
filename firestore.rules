@@ -1,0 +1,151 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidPlayerProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+             data.gamesPlayed is int && data.gamesPlayed >= 0 && data.gamesPlayed <= 1000000 &&
+             data.gamesWon is int && data.gamesWon >= 0 && data.gamesWon <= 1000000 &&
+             data.capturesTotal is int && data.capturesTotal >= 0 && data.capturesTotal <= 10000000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLudoRoom(data) {
+      return data.hostUid is string && data.hostUid.size() >= 1 && data.hostUid.size() <= 128 &&
+             data.roomCode is string && data.roomCode.size() >= 4 && data.roomCode.size() <= 12 && data.roomCode.matches('^[A-Z0-9_\\-]+$') &&
+             data.isPublic is bool &&
+             data.status is string && data.status.size() <= 16 && (data.status == 'WAITING' || data.status == 'PLAYING' || data.status == 'FINISHED') &&
+             data.maxPlayers is int && data.maxPlayers >= 2 && data.maxPlayers <= 4 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 4 && data.memberUids[0] is string && data.memberUids[0].size() <= 128 &&
+             data.playerNames is list && data.playerNames.size() >= 1 && data.playerNames.size() <= 4 && data.playerNames[0] is string && data.playerNames[0].size() <= 60 &&
+             data.playerColors is list && data.playerColors.size() >= 1 && data.playerColors.size() <= 4 && data.playerColors[0] is string && data.playerColors[0].size() <= 12 &&
+             data.playerUids is list && data.playerUids.size() >= 1 && data.playerUids.size() <= 4 && data.playerUids[0] is string && data.playerUids[0].size() <= 128 &&
+             data.tokens is list && data.tokens.size() == 16 && data.tokens[0] is int &&
+             data.currentTurnColor is string && data.currentTurnColor.size() <= 12 && (data.currentTurnColor == 'RED' || data.currentTurnColor == 'GREEN' || data.currentTurnColor == 'YELLOW' || data.currentTurnColor == 'BLUE') &&
+             data.turnPhase is string && data.turnPhase.size() <= 16 && (data.turnPhase == 'ROLL' || data.turnPhase == 'MOVE' || data.turnPhase == 'GAME_OVER') &&
+             data.diceValue is int && data.diceValue >= 0 && data.diceValue <= 6 &&
+             data.consecutiveSixes is int && data.consecutiveSixes >= 0 && data.consecutiveSixes <= 3 &&
+             data.turnNumber is int && data.turnNumber >= 1 && data.turnNumber <= 100000 &&
+             data.lastEvent is string && data.lastEvent.size() <= 160 &&
+             data.reactionEmoji is string && data.reactionEmoji.size() <= 16 &&
+             data.reactionSender is string && data.reactionSender.size() <= 60 &&
+             data.winnerColor is string && data.winnerColor.size() <= 12 && (data.winnerColor == 'NONE' || data.winnerColor == 'RED' || data.winnerColor == 'GREEN' || data.winnerColor == 'YELLOW' || data.winnerColor == 'BLUE') &&
+             data.winnerOrder is list && data.winnerOrder.size() <= 4 && (data.winnerOrder.size() == 0 || (data.winnerOrder[0] is string && data.winnerOrder[0].size() <= 12)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'gamesPlayed', 'gamesWon', 'capturesTotal', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'gamesPlayed', 'gamesWon', 'capturesTotal', 'createdAt', 'updatedAt']) &&
+                       isValidPlayerProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidPlayerProfile(incoming()) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'gamesPlayed', 'gamesWon', 'capturesTotal', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    match /rooms/{roomId} {
+      // Members can always read their room; waiting rooms can be inspected by code or matchmaking
+      allow get: if isSignedIn() &&
+                    isValidId(roomId) &&
+                    (request.auth.uid in existing().memberUids || existing().status == 'WAITING');
+
+      // Scoped list queries: user's own rooms (whereArrayContains memberUids) or open public waiting rooms
+      allow list: if isSignedIn() &&
+                     (request.auth.uid in existing().memberUids ||
+                      (existing().isPublic == true && existing().status == 'WAITING'));
+
+      allow create: if isSignedIn() &&
+                       isValidId(roomId) &&
+                       incoming().hostUid == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().keys().hasAll([
+                         'hostUid', 'roomCode', 'isPublic', 'status', 'maxPlayers',
+                         'memberUids', 'playerNames', 'playerColors', 'playerUids',
+                         'tokens', 'currentTurnColor', 'turnPhase', 'diceValue',
+                         'consecutiveSixes', 'turnNumber', 'lastEvent',
+                         'reactionEmoji', 'reactionSender', 'winnerColor', 'winnerOrder',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'hostUid', 'roomCode', 'isPublic', 'status', 'maxPlayers',
+                         'memberUids', 'playerNames', 'playerColors', 'playerUids',
+                         'tokens', 'currentTurnColor', 'turnPhase', 'diceValue',
+                         'consecutiveSixes', 'turnNumber', 'lastEvent',
+                         'reactionEmoji', 'reactionSender', 'winnerColor', 'winnerOrder',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLudoRoom(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(roomId) &&
+                       isValidLudoRoom(incoming()) &&
+                       existing().status != 'FINISHED' &&
+                       incoming().hostUid == existing().hostUid &&
+                       incoming().roomCode == existing().roomCode &&
+                       incoming().isPublic == existing().isPublic &&
+                       incoming().maxPlayers == existing().maxPlayers &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Player joins a WAITING room
+                         (existing().status == 'WAITING' &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().memberUids.size() <= existing().maxPlayers &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'memberUids', 'playerNames', 'playerColors', 'playerUids',
+                            'status', 'lastEvent', 'updatedAt'
+                          ])) ||
+                         // Action 2: Room member advances game state, turn, or starts game
+                         ((request.auth.uid in existing().memberUids) &&
+                          incoming().memberUids == existing().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'status', 'playerNames', 'playerColors', 'playerUids',
+                            'tokens', 'currentTurnColor', 'turnPhase', 'diceValue',
+                            'consecutiveSixes', 'turnNumber', 'lastEvent',
+                            'reactionEmoji', 'reactionSender', 'winnerColor', 'winnerOrder',
+                            'updatedAt'
+                          ]))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(roomId) && existing().hostUid == request.auth.uid;
+    }
+  }
+}

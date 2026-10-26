@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for Ludo Atelier 3D: a warm architectural minimal 3D Ludo game for Android with real-time online multiplayer via Firebase Firestore, Google Sign-In, private room codes, quick matchmaking, offline AI/Pass-and-Play modes, interactive 3D orbit/tilt/zoom board controls, and complete live Ludo rules.",
+  "updatedAt":  "2026-10-26T06:55:07.735244025Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

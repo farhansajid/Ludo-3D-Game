@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="200dp"
+    android:viewportWidth="360"
+    android:viewportHeight="200">
+    <!-- Warm architectural studio background -->
+    <path android:pathData="M0,0h360v200h-360z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="360"
+                android:endY="200"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#26231F" />
+                <item android:offset="1.0" android:color="#181613" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Soft ambient brass glow -->
+    <path
+        android:fillColor="#18C59B4E"
+        android:pathData="M180,105m-110,0a110,55 0,1 0,220 0a110,55 0,1 0,-220 0" />
+
+    <!-- Isometric 3D Board Plinth Base (Shadow & Extrusion) -->
+    <path
+        android:fillColor="#0F0E0C"
+        android:pathData="M180,44 L304,106 L180,168 L56,106 Z" />
+    <path
+        android:fillColor="#C59B4E"
+        android:pathData="M56,96 L180,158 L180,166 L56,104 Z" />
+    <path
+        android:fillColor="#9A7635"
+        android:pathData="M304,96 L180,158 L180,166 L304,104 Z" />
+
+    <!-- Isometric 3D Board Top Surface -->
+    <path
+        android:fillColor="#F6F3EC"
+        android:pathData="M180,34 L304,96 L180,158 L56,96 Z" />
+
+    <!-- Four Isometric Corner Yards (Terracotta, Sage, Gold, Slate) -->
+    <!-- Top (Red / Terracotta) -->
+    <path
+        android:fillColor="#D95D4E"
+        android:pathData="M180,42 L222,63 L180,84 L138,63 Z" />
+    <!-- Right (Green / Sage) -->
+    <path
+        android:fillColor="#4A8B6E"
+        android:pathData="M244,74 L286,95 L244,116 L202,95 Z" />
+    <!-- Bottom (Yellow / Ochre Gold) -->
+    <path
+        android:fillColor="#DF9A3B"
+        android:pathData="M180,108 L222,129 L180,150 L138,129 Z" />
+    <!-- Left (Blue / Slate) -->
+    <path
+        android:fillColor="#4A78A8"
+        android:pathData="M116,74 L158,95 L116,116 L74,95 Z" />
+
+    <!-- Center 3D Pyramid Goal -->
+    <path
+        android:fillColor="#C59B4E"
+        android:pathData="M180,82 L202,95 L180,108 L158,95 Z" />
+    <path
+        android:fillColor="#E5C178"
+        android:pathData="M180,74 L202,95 L180,95 Z" />
+    <path
+        android:fillColor="#B3893E"
+        android:pathData="M180,74 L158,95 L180,95 Z" />
+
+    <!-- Sculpted 3D Pawns standing on the board -->
+    <!-- Red Pawn -->
+    <path
+        android:fillColor="#A83E31"
+        android:pathData="M174,62 L186,62 L183,42 L177,42 Z" />
+    <path
+        android:fillColor="#F4DCD8"
+        android:pathData="M180,38m-6,0a6,6 0,1 0,12 0a6,6 0,1 0,-12 0" />
+
+    <!-- Sage Pawn -->
+    <path
+        android:fillColor="#2F634C"
+        android:pathData="M238,94 L250,94 L247,74 L241,74 Z" />
+    <path
+        android:fillColor="#D9EBE2"
+        android:pathData="M244,70m-6,0a6,6 0,1 0,12 0a6,6 0,1 0,-12 0" />
+
+    <!-- Slate Blue Pawn -->
+    <path
+        android:fillColor="#2E537A"
+        android:pathData="M110,94 L122,94 L119,74 L113,74 Z" />
+    <path
+        android:fillColor="#DAE6F2"
+        android:pathData="M116,70m-6,0a6,6 0,1 0,12 0a6,6 0,1 0,-12 0" />
+
+    <!-- Floating 3D Ivory Die on Right -->
+    <path
+        android:fillColor="#F6F3EC"
+        android:pathData="M296,34 L318,45 L296,56 L274,45 Z" />
+    <path
+        android:fillColor="#E6E1D5"
+        android:pathData="M274,45 L296,56 L296,78 L274,67 Z" />
+    <path
+        android:fillColor="#CFC8B8"
+        android:pathData="M318,45 L296,56 L296,78 L318,67 Z" />
+    <path
+        android:fillColor="#D95D4E"
+        android:pathData="M296,45m-2.5,0a2.5,2.5 0,1 0,5 0a2.5,2.5 0,1 0,-5 0" />
+</vector>

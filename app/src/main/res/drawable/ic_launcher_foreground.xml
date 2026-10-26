@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Four architectural quadrant tiles (Terracotta, Sage, Slate Blue, Ochre Gold) -->
+    <path
+        android:fillColor="#D95D4E"
+        android:pathData="M30,30h21v21h-21z" />
+    <path
+        android:fillColor="#4A8B6E"
+        android:pathData="M57,30h21v21h-21z" />
+    <path
+        android:fillColor="#4A78A8"
+        android:pathData="M30,57h21v21h-21z" />
+    <path
+        android:fillColor="#DF9A3B"
+        android:pathData="M57,57h21v21h-21z" />
+
+    <!-- Center isometric 3D Ludo crown / pawn silhouette in warm alabaster & brass -->
+    <path
+        android:fillColor="#F6F3EC"
+        android:pathData="M54,28 L68,36 L68,52 L54,60 L40,52 L40,36 Z" />
+    <path
+        android:fillColor="#EFECE4"
+        android:pathData="M54,28 L68,36 L54,44 L40,36 Z" />
+    <path
+        android:fillColor="#DDD7C8"
+        android:pathData="M40,36 L54,44 L54,60 L40,52 Z" />
+    <path
+        android:fillColor="#C59B4E"
+        android:pathData="M54,44 L68,36 L68,52 L54,60 Z" />
+
+    <!-- Dice pips on isometric cube faces -->
+    <path
+        android:fillColor="#22201D"
+        android:pathData="M54,36m-2.2,0a2.2,2.2 0,1 1,4.4 0a2.2,2.2 0,1 1,-4.4 0" />
+    <path
+        android:fillColor="#22201D"
+        android:pathData="M45,45m-1.8,0a1.8,1.8 0,1 1,3.6 0a1.8,1.8 0,1 1,-3.6 0" />
+    <path
+        android:fillColor="#22201D"
+        android:pathData="M49,51m-1.8,0a1.8,1.8 0,1 1,3.6 0a1.8,1.8 0,1 1,-3.6 0" />
+    <path
+        android:fillColor="#F6F3EC"
+        android:pathData="M61,48m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+
+    <!-- Base pedestal ring -->
+    <path
+        android:fillColor="#F6F3EC"
+        android:pathData="M38,70 C38,66 70,66 70,70 L73,76 C73,79 35,79 35,76 Z" />
+</vector>
