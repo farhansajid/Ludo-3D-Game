@@ -2,7 +2,7 @@
   "entities": {
     "PlayerProfile": {
       "title": "PlayerProfile",
-      "description": "Stores a player's profile identity and career Ludo statistics.",
+      "description": "Stores a player's profile identity, country, leaderboard rank score, coins, XP, daily missions, and career Ludo statistics.",
       "type": "object",
       "properties": {
         "userId": {
@@ -11,7 +11,27 @@
         },
         "displayName": {
           "type": "string",
-          "description": "Display name shown in Ludo lobbies and turn banners."
+          "description": "Display name shown in Ludo lobbies, turn banners, and leaderboards."
+        },
+        "countryCode": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 country code (e.g. US, IN, PK, GB) for country-wise ranking."
+        },
+        "countryName": {
+          "type": "string",
+          "description": "Human-readable country name for leaderboard display."
+        },
+        "score": {
+          "type": "integer",
+          "description": "Cumulative ranking points (+100 win, +25 capture, +15 home pawn, -15 loss, -25 forfeit)."
+        },
+        "coins": {
+          "type": "integer",
+          "description": "In-game Royal Coins earned from Daily Missions, matches, or In-App Purchases."
+        },
+        "xp": {
+          "type": "integer",
+          "description": "Experience points earned from Daily Challenges and matches."
         },
         "gamesPlayed": {
           "type": "integer",
@@ -24,6 +44,18 @@
         "capturesTotal": {
           "type": "integer",
           "description": "Total opponent tokens captured across matches."
+        },
+        "homesReachedTotal": {
+          "type": "integer",
+          "description": "Total pawns guided into the center Home goal across matches."
+        },
+        "claimedMissionIds": {
+          "type": "array",
+          "description": "List of date-scoped daily mission IDs already claimed by the player."
+        },
+        "unlockedItems": {
+          "type": "array",
+          "description": "List of store item/skin IDs unlocked via In-App Purchases or Royal Coins."
         },
         "createdAt": {
           "type": "string",
@@ -39,147 +71,151 @@
       "required": [
         "userId",
         "displayName",
+        "countryCode",
+        "countryName",
+        "score",
+        "coins",
+        "xp",
         "gamesPlayed",
         "gamesWon",
         "capturesTotal",
+        "homesReachedTotal",
+        "claimedMissionIds",
+        "unlockedItems",
         "createdAt",
         "updatedAt"
       ]
     },
     "LudoRoom": {
       "title": "LudoRoom",
-      "description": "Represents an online multiplayer Ludo game room and its synchronized board state.",
+      "description": "Represents an online multiplayer Ludo game room (2 to 8 players), dual-dice state, and live audio call state.",
       "type": "object",
       "properties": {
-        "hostUid": {
-          "type": "string",
-          "description": "UID of the player who created and hosts the room."
-        },
-        "roomCode": {
-          "type": "string",
-          "description": "6-character alphanumeric room invite code."
-        },
-        "isPublic": {
-          "type": "boolean",
-          "description": "Whether the room is discoverable in quick public matchmaking."
-        },
-        "status": {
-          "type": "string",
-          "enum": ["WAITING", "PLAYING", "FINISHED"],
-          "description": "Lifecycle status of the room."
-        },
-        "maxPlayers": {
-          "type": "integer",
-          "description": "Maximum number of seats (2 to 4)."
-        },
-        "memberUids": {
-          "type": "array",
-          "description": "List of authenticated Firebase UIDs participating in this room."
-        },
-        "playerNames": {
-          "type": "array",
-          "description": "Display names of players seated in the room."
-        },
-        "playerColors": {
-          "type": "array",
-          "description": "Assigned Ludo colors (RED, GREEN, YELLOW, BLUE) for seated players."
-        },
-        "playerUids": {
-          "type": "array",
-          "description": "UIDs or bot identifiers aligned with playerColors."
-        },
-        "tokens": {
-          "type": "array",
-          "description": "16 integers representing positions of all 16 tokens (-1 in yard, 0..50 track, 51..56 home stretch, 57 finished)."
-        },
-        "currentTurnColor": {
-          "type": "string",
-          "enum": ["RED", "GREEN", "YELLOW", "BLUE"],
-          "description": "Color of the player whose turn is currently active."
-        },
-        "turnPhase": {
-          "type": "string",
-          "enum": ["ROLL", "MOVE", "GAME_OVER"],
-          "description": "Current phase within the active turn."
-        },
-        "diceValue": {
-          "type": "integer",
-          "description": "Current rolled die face (1..6, or 0 before first roll)."
-        },
-        "consecutiveSixes": {
-          "type": "integer",
-          "description": "Number of consecutive 6s rolled in the current turn (0..2)."
-        },
-        "turnNumber": {
-          "type": "integer",
-          "description": "Monotonically increasing turn counter."
-        },
-        "lastEvent": {
-          "type": "string",
-          "description": "Human-readable description of the latest move or rule event."
-        },
-        "reactionEmoji": {
-          "type": "string",
-          "description": "Latest quick emoji reaction sent by a player."
-        },
-        "reactionSender": {
-          "type": "string",
-          "description": "Display name or color of the player who sent the latest emoji reaction."
-        },
-        "winnerColor": {
-          "type": "string",
-          "enum": ["NONE", "RED", "GREEN", "YELLOW", "BLUE"],
-          "description": "First-place winner color, or NONE while match is in progress."
-        },
-        "winnerOrder": {
-          "type": "array",
-          "description": "Ordered list of player colors that have finished all 4 tokens."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when the room was created via FieldValue.serverTimestamp()."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when the room was last updated via FieldValue.serverTimestamp()."
-        }
+        "hostUid": { "type": "string" },
+        "roomCode": { "type": "string" },
+        "isPublic": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["WAITING", "PLAYING", "FINISHED"] },
+        "maxPlayers": { "type": "integer" },
+        "memberUids": { "type": "array" },
+        "playerNames": { "type": "array" },
+        "playerColors": { "type": "array" },
+        "playerUids": { "type": "array" },
+        "tokens": { "type": "array" },
+        "currentTurnColor": { "type": "string" },
+        "turnPhase": { "type": "string", "enum": ["ROLL", "MOVE", "GAME_OVER"] },
+        "diceValue": { "type": "integer" },
+        "diceValue2": { "type": "integer" },
+        "dice1Used": { "type": "boolean" },
+        "dice2Used": { "type": "boolean" },
+        "selectedDieIndex": { "type": "integer" },
+        "consecutiveSixes": { "type": "integer" },
+        "turnNumber": { "type": "integer" },
+        "lastEvent": { "type": "string" },
+        "reactionEmoji": { "type": "string" },
+        "reactionSender": { "type": "string" },
+        "winnerColor": { "type": "string" },
+        "winnerOrder": { "type": "array" },
+        "activeVoiceUids": { "type": "array" },
+        "callMode": { "type": "string", "enum": ["NONE", "GROUP", "DIRECT"] },
+        "callInitiatorUid": { "type": "string" },
+        "callTargetUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "hostUid",
-        "roomCode",
-        "isPublic",
-        "status",
-        "maxPlayers",
-        "memberUids",
-        "playerNames",
-        "playerColors",
-        "playerUids",
-        "tokens",
-        "currentTurnColor",
-        "turnPhase",
-        "diceValue",
-        "consecutiveSixes",
-        "turnNumber",
-        "lastEvent",
-        "reactionEmoji",
-        "reactionSender",
-        "winnerColor",
-        "winnerOrder",
-        "createdAt",
-        "updatedAt"
+        "hostUid", "roomCode", "isPublic", "status", "maxPlayers",
+        "memberUids", "playerNames", "playerColors", "playerUids",
+        "tokens", "currentTurnColor", "turnPhase",
+        "diceValue", "diceValue2", "dice1Used", "dice2Used", "selectedDieIndex",
+        "consecutiveSixes", "turnNumber", "lastEvent",
+        "reactionEmoji", "reactionSender", "winnerColor", "winnerOrder",
+        "activeVoiceUids", "callMode", "callInitiatorUid", "callTargetUid",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "VoiceSignal": {
+      "title": "VoiceSignal",
+      "description": "Real-time audio signaling and low-latency voice frame packet for 1-to-1 and group calls.",
+      "type": "object",
+      "properties": {
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "targetUid": { "type": "string" },
+        "signalType": { "type": "string", "enum": ["OFFER", "ANSWER", "ICE", "AUDIO_FRAME", "HANGUP"] },
+        "payload": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderUid", "senderName", "targetUid", "signalType", "payload", "createdAt"]
+    },
+    "AdminAppConfig": {
+      "title": "AdminAppConfig",
+      "description": "Live Firebase & game rule configuration managed from the Owner Admin Control Panel.",
+      "type": "object",
+      "properties": {
+        "updatedByUid": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "customFirebaseDatabaseId": { "type": "string" },
+        "turnDurationSeconds": { "type": "integer" },
+        "winPoints": { "type": "integer" },
+        "capturePoints": { "type": "integer" },
+        "homePoints": { "type": "integer" },
+        "missionRewardMultiplier": { "type": "integer" },
+        "announcementBanner": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "updatedByUid", "ownerEmail", "customFirebaseDatabaseId",
+        "turnDurationSeconds", "winPoints", "capturePoints", "homePoints",
+        "missionRewardMultiplier", "announcementBanner", "updatedAt"
+      ]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Stores friend requests and accepted friendships between players for online status and active room discovery.",
+      "type": "object",
+      "properties": {
+        "fromUid": { "type": "string", "description": "Sender UID" },
+        "fromName": { "type": "string", "description": "Sender display name" },
+        "fromCountry": { "type": "string", "description": "Sender ISO country code" },
+        "toUid": { "type": "string", "description": "Recipient UID" },
+        "toName": { "type": "string", "description": "Recipient display name" },
+        "toCountry": { "type": "string", "description": "Recipient ISO country code" },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "DECLINED"] },
+        "memberUids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Contains [fromUid, toUid] for single-query real-time membership lookups"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "fromUid", "fromName", "fromCountry",
+        "toUid", "toName", "toCountry",
+        "status", "memberUids", "createdAt", "updatedAt"
       ]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "PlayerProfile",
-      "description": "Stores each authenticated player's profile and Ludo career stats."
+      "description": "Stores each authenticated player's profile, country, score, coins, XP, daily missions, and Ludo career stats."
     },
     "/rooms/{roomId}": {
       "schema": "LudoRoom",
-      "description": "Stores real-time multiplayer Ludo room state, board tokens, and turn synchronization."
+      "description": "Stores real-time multiplayer Ludo room state, dual-dice state, 2-8 player tokens, and voice call metadata."
+    },
+    "/rooms/{roomId}/voiceSignals/{signalId}": {
+      "schema": "VoiceSignal",
+      "description": "Stores real-time WebRTC signaling and voice packets for 1-to-1 and group audio calls."
+    },
+    "/appConfig/{configId}": {
+      "schema": "AdminAppConfig",
+      "description": "Stores live Firebase and game configuration managed by the Owner Admin Control Panel."
+    },
+    "/friendRequests/{requestId}": {
+      "schema": "FriendRequest",
+      "description": "Stores pending friend requests and accepted friendships between players."
     }
   }
 }

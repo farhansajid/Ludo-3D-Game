@@ -9,6 +9,8 @@ data class MoveOutcome(
   val pathSteps: List<Int>,
   val capturedTokenIndices: List<Int>,
   val reachedHome: Boolean,
+  val formedBlockade: Boolean,
+  val destinationGlobalIndex: Int?,
   val playerFinishedAll: Boolean,
   val bonusRollGranted: Boolean,
   val nextTurnColor: PlayerColor,
@@ -22,6 +24,7 @@ data class MoveOutcome(
 object LudoRulesEngine {
 
   const val YARD_POS = -1
+  const val TILES_PER_ARM = 13
   const val MAX_MAIN_TRACK_REL = 50
   const val HOME_GOAL_POS = 56
   const val OUTER_TRACK_SIZE = 52
@@ -29,30 +32,101 @@ object LudoRulesEngine {
   val SAFE_GLOBAL_INDICES = setOf(0, 8, 13, 21, 26, 34, 39, 47)
   val STAR_GLOBAL_INDICES = setOf(8, 21, 34, 47)
 
+  fun boardArmCountForPlayers(maxPlayersOrSeats: Int): Int {
+    return when {
+      maxPlayersOrSeats <= 4 -> 4
+      maxPlayersOrSeats <= 6 -> 6
+      else -> 8
+    }
+  }
+
+  fun outerTrackSize(armCount: Int = 4): Int = armCount.coerceIn(4, 8) * TILES_PER_ARM
+
+  fun maxMainTrackRel(armCount: Int = 4): Int = outerTrackSize(armCount) - 2
+
+  fun homeGoalPos(armCount: Int = 4): Int = maxMainTrackRel(armCount) + 6
+
+  fun safeGlobalIndices(armCount: Int = 4): Set<Int> {
+    val arms = armCount.coerceIn(4, 8)
+    val set = mutableSetOf<Int>()
+    for (arm in 0 until arms) {
+      set.add(arm * TILES_PER_ARM)
+      set.add(arm * TILES_PER_ARM + 8)
+    }
+    return set
+  }
+
+  fun starGlobalIndices(armCount: Int = 4): Set<Int> {
+    val arms = armCount.coerceIn(4, 8)
+    return (0 until arms).map { it * TILES_PER_ARM + 8 }.toSet()
+  }
+
+  fun armIndexForColor(
+    color: PlayerColor,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
+  ): Int {
+    val arms = armCount.coerceIn(4, 8)
+    if (seats.isEmpty()) {
+      return color.ordinal % arms
+    }
+    val allWithinStandardRange = seats.all { it.color.ordinal < arms }
+    if (allWithinStandardRange && seats.map { it.color }.distinct().size == seats.size) {
+      return color.ordinal % arms
+    }
+    val seatIdx = seats.indexOfFirst { it.color == color }
+    if (seatIdx < 0) return color.ordinal % arms
+    return if (seats.size == 2 && arms == 4) {
+      if (seatIdx == 0) 0 else 2
+    } else {
+      seatIdx % arms
+    }
+  }
+
+  fun startTrackIndexForColor(
+    color: PlayerColor,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
+  ): Int {
+    return armIndexForColor(color, seats, armCount) * TILES_PER_ARM
+  }
+
   fun tokenIndicesForColor(color: PlayerColor): IntRange {
     val start = color.ordinal * 4
     return start until (start + 4)
   }
 
   fun colorForTokenIndex(tokenIndex: Int): PlayerColor {
-    return PlayerColor.entries[(tokenIndex / 4).coerceIn(0, 3)]
+    return PlayerColor.entries[(tokenIndex / 4).coerceIn(0, PlayerColor.entries.size - 1)]
   }
 
-  fun toGlobalTrackIndex(color: PlayerColor, relativePos: Int): Int? {
-    if (relativePos !in 0..MAX_MAIN_TRACK_REL) return null
-    return (color.startTrackIndex + relativePos) % OUTER_TRACK_SIZE
+  fun toGlobalTrackIndex(
+    color: PlayerColor,
+    relativePos: Int,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
+  ): Int? {
+    val maxRel = maxMainTrackRel(armCount)
+    if (relativePos !in 0..maxRel) return null
+    val startIdx = startTrackIndexForColor(color, seats, armCount)
+    return (startIdx + relativePos) % outerTrackSize(armCount)
   }
 
   /**
-   * Returns a map of global track square (0..51) -> set of PlayerColors that have >= 2 tokens
+   * Returns a map of global track square -> set of PlayerColors that have >= 2 tokens
    * stacked on that square (forming an impassable blockade for other colors).
    */
-  fun getActiveBlockades(tokens: List<Int>): Map<Int, Set<PlayerColor>> {
+  fun getActiveBlockades(
+    tokens: List<Int>,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
+  ): Map<Int, Set<PlayerColor>> {
     val countsBySquareAndColor = mutableMapOf<Int, MutableMap<PlayerColor, Int>>()
-    for (tokenIndex in 0 until 16) {
+    val maxTokenIdx = tokens.size.coerceAtMost(32)
+    for (tokenIndex in 0 until maxTokenIdx) {
       val pos = tokens.getOrElse(tokenIndex) { YARD_POS }
       val color = colorForTokenIndex(tokenIndex)
-      val globalIdx = toGlobalTrackIndex(color, pos) ?: continue
+      val globalIdx = toGlobalTrackIndex(color, pos, seats, armCount) ?: continue
       val colorMap = countsBySquareAndColor.getOrPut(globalIdx) { mutableMapOf() }
       colorMap[color] = (colorMap[color] ?: 0) + 1
     }
@@ -69,38 +143,36 @@ object LudoRulesEngine {
 
   /**
    * Checks whether [tokenIndex] belonging to [color] can legally move by [diceValue].
-   * Rules enforced:
-   * - Rolling 6 is required to exit the Home Yard (-1 -> 0).
-   * - Exact roll is required to land in the center Home Triangle (56).
-   * - Two same-color opponent tokens on any outer-track square form an impassable blockade
-   *   that cannot be passed through or landed upon.
    */
   fun canTokenMove(
     tokens: List<Int>,
     tokenIndex: Int,
-    diceValue: Int
+    diceValue: Int,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
   ): Boolean {
     if (diceValue !in 1..6) return false
     val color = colorForTokenIndex(tokenIndex)
     val currentPos = tokens.getOrElse(tokenIndex) { YARD_POS }
+    val goalPos = homeGoalPos(armCount)
 
-    if (currentPos >= HOME_GOAL_POS) return false
+    if (currentPos >= goalPos) return false
 
-    val blockades = getActiveBlockades(tokens)
+    val blockades = getActiveBlockades(tokens, seats, armCount)
 
     if (currentPos == YARD_POS) {
       if (diceValue != 6) return false
-      val startGlobal = color.startTrackIndex
+      val startGlobal = startTrackIndexForColor(color, seats, armCount)
       val blockingColors = blockades[startGlobal].orEmpty()
       return blockingColors.none { it != color }
     }
 
     val targetPos = currentPos + diceValue
-    if (targetPos > HOME_GOAL_POS) return false
+    if (targetPos > goalPos) return false
 
     // Check every step along the path for opponent blockades on the outer track
     for (stepPos in (currentPos + 1)..targetPos) {
-      val globalStep = toGlobalTrackIndex(color, stepPos)
+      val globalStep = toGlobalTrackIndex(color, stepPos, seats, armCount)
       if (globalStep != null) {
         val blockingColors = blockades[globalStep].orEmpty()
         if (blockingColors.any { it != color }) {
@@ -115,16 +187,18 @@ object LudoRulesEngine {
   fun getLegalMoveTokenIndices(
     tokens: List<Int>,
     color: PlayerColor,
-    diceValue: Int
+    diceValue: Int,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
   ): List<Int> {
     return tokenIndicesForColor(color).filter { idx ->
-      canTokenMove(tokens, idx, diceValue)
+      idx < tokens.size && canTokenMove(tokens, idx, diceValue, seats, armCount)
     }
   }
 
   /**
-   * Executes a move for [tokenIndex] by [diceValue] and computes captures, bonus rolls,
-   * turn transitions, and win state.
+   * Executes a move for [tokenIndex] by [diceValue] and computes captures, blockades,
+   * bonus rolls, turn transitions, and win state.
    */
   fun executeMove(
     tokens: List<Int>,
@@ -134,11 +208,14 @@ object LudoRulesEngine {
     diceValue: Int,
     consecutiveSixes: Int,
     currentWinnerColor: String,
-    currentWinnerOrder: List<String>
+    currentWinnerOrder: List<String>,
+    armCount: Int = boardArmCountForPlayers(seats.size.coerceAtLeast(4))
   ): MoveOutcome {
+    val goalPos = homeGoalPos(armCount)
+    val safeIndices = safeGlobalIndices(armCount)
     val mutableTokens = tokens.toMutableList()
-    val startPos = mutableTokens[tokenIndex]
-    val targetPos = if (startPos == YARD_POS) 0 else (startPos + diceValue).coerceAtMost(HOME_GOAL_POS)
+    val startPos = mutableTokens.getOrElse(tokenIndex) { YARD_POS }
+    val targetPos = if (startPos == YARD_POS) 0 else (startPos + diceValue).coerceAtMost(goalPos)
 
     val pathSteps = if (startPos == YARD_POS) {
       listOf(0)
@@ -150,13 +227,13 @@ object LudoRulesEngine {
 
     // Check for captures on the destination square (only on outer track and non-safe squares)
     val capturedIndices = mutableListOf<Int>()
-    val destGlobal = toGlobalTrackIndex(currentTurnColor, targetPos)
-    if (destGlobal != null && destGlobal !in SAFE_GLOBAL_INDICES) {
-      for (otherIdx in 0 until 16) {
+    val destGlobal = toGlobalTrackIndex(currentTurnColor, targetPos, seats, armCount)
+    if (destGlobal != null && destGlobal !in safeIndices) {
+      for (otherIdx in mutableTokens.indices) {
         val otherColor = colorForTokenIndex(otherIdx)
         if (otherColor != currentTurnColor) {
           val otherPos = mutableTokens[otherIdx]
-          val otherGlobal = toGlobalTrackIndex(otherColor, otherPos)
+          val otherGlobal = toGlobalTrackIndex(otherColor, otherPos, seats, armCount)
           if (otherGlobal == destGlobal) {
             capturedIndices.add(otherIdx)
           }
@@ -172,9 +249,19 @@ object LudoRulesEngine {
       }
     }
 
-    val reachedHome = targetPos == HOME_GOAL_POS
-    val playerTokens = tokenIndicesForColor(currentTurnColor).map { mutableTokens[it] }
-    val playerFinishedAll = playerTokens.all { it == HOME_GOAL_POS }
+    // Check if this move formed a same-color blockade on the destination outer track square
+    val formedBlockade = if (destGlobal != null) {
+      val friendlyOnDest = tokenIndicesForColor(currentTurnColor).count { idx ->
+        idx < mutableTokens.size && toGlobalTrackIndex(currentTurnColor, mutableTokens[idx], seats, armCount) == destGlobal
+      }
+      friendlyOnDest >= 2
+    } else {
+      false
+    }
+
+    val reachedHome = targetPos == goalPos
+    val playerTokens = tokenIndicesForColor(currentTurnColor).map { mutableTokens.getOrElse(it) { YARD_POS } }
+    val playerFinishedAll = playerTokens.all { it == goalPos }
 
     val updatedWinners = currentWinnerOrder.toMutableList()
     if (playerFinishedAll && currentTurnColor.name !in updatedWinners) {
@@ -189,10 +276,10 @@ object LudoRulesEngine {
     val activeColors = if (seats.isNotEmpty()) {
       seats.map { it.color }
     } else {
-      PlayerColor.entries
+      PlayerColor.entries.take(4)
     }
     val unfinishedColors = activeColors.filter { c ->
-      c.name !in updatedWinners && tokenIndicesForColor(c).any { mutableTokens[it] < HOME_GOAL_POS }
+      c.name !in updatedWinners && tokenIndicesForColor(c).any { mutableTokens.getOrElse(it) { YARD_POS } < goalPos }
     }
 
     val isGameOver = unfinishedColors.size <= 1 && activeColors.size >= 2 && updatedWinners.isNotEmpty()
@@ -220,14 +307,15 @@ object LudoRulesEngine {
     val playerLabel = seats.firstOrNull { it.color == currentTurnColor }?.name ?: currentTurnColor.label
     val eventText = when {
       isGameOver -> "$playerLabel wins the match!"
-      playerFinishedAll -> "$playerLabel finished all 4 tokens!"
+      playerFinishedAll -> "$playerLabel finished all 4 pawns!"
       capturedIndices.isNotEmpty() -> {
         val capturedColor = colorForTokenIndex(capturedIndices.first())
-        "$playerLabel captured ${capturedColor.label}! Bonus roll"
+        "$playerLabel captured ${capturedColor.label}! +25 pts & Bonus roll"
       }
-      reachedHome -> "$playerLabel guided a token Home! Bonus roll"
-      startPos == YARD_POS -> "$playerLabel deployed a token onto the board! Bonus roll"
-      diceValue == 6 -> "$playerLabel rolled a 6! Bonus roll"
+      reachedHome -> "$playerLabel guided a pawn Home! +15 pts & Bonus roll"
+      formedBlockade -> "$playerLabel formed a golden Blockade shield!"
+      startPos == YARD_POS -> "$playerLabel deployed a pawn onto the board!"
+      diceValue == 6 -> "$playerLabel moved 6 steps! Bonus roll"
       else -> "$playerLabel advanced $diceValue ${if (diceValue == 1) "step" else "steps"}"
     }
 
@@ -236,6 +324,8 @@ object LudoRulesEngine {
       pathSteps = pathSteps,
       capturedTokenIndices = capturedIndices,
       reachedHome = reachedHome,
+      formedBlockade = formedBlockade,
+      destinationGlobalIndex = destGlobal,
       playerFinishedAll = playerFinishedAll,
       bonusRollGranted = bonusRoll,
       nextTurnColor = nextColor,
@@ -252,10 +342,20 @@ object LudoRulesEngine {
     activeSeats: List<PlayerColor>,
     finishedColors: List<String>
   ): PlayerColor {
-    val order = PlayerColor.entries
-    val startIdx = order.indexOf(current)
-    for (offset in 1..4) {
-      val candidate = order[(startIdx + offset) % 4]
+    if (activeSeats.isEmpty()) return current
+    val currentIdx = activeSeats.indexOf(current)
+    if (currentIdx >= 0) {
+      for (offset in 1..activeSeats.size) {
+        val candidate = activeSeats[(currentIdx + offset) % activeSeats.size]
+        if (candidate.name !in finishedColors) {
+          return candidate
+        }
+      }
+    }
+    val allEntries = PlayerColor.entries
+    val startOrd = allEntries.indexOf(current).coerceAtLeast(0)
+    for (offset in 1..allEntries.size) {
+      val candidate = allEntries[(startOrd + offset) % allEntries.size]
       if (candidate in activeSeats && candidate.name !in finishedColors) {
         return candidate
       }
@@ -264,76 +364,131 @@ object LudoRulesEngine {
   }
 
   /**
-   * Tactical AI evaluator that scores legal moves based on:
-   * 1. Capturing an opponent token (+120)
-   * 2. Reaching the exact Home Triangle (+100)
-   * 3. Exiting the Home Yard on a 6 (+85)
-   * 4. Landing on a Safe Star / Start square or forming a same-color Blockade (+65)
-   * 5. Escaping danger when an opponent is 1..6 tiles behind (+50)
-   * 6. Advancing the furthest-ahead token closer to home (+progress)
+   * Calculates leaderboard rank points earned or deducted for a match:
+   * - Win: +100 pts
+   * - Capture: +25 pts each
+   * - Pawn reaching Home: +15 pts each
+   * - Loss: -15 pts
+   * - Forfeit: -25 pts
+   */
+  fun calculateMatchScoreDelta(
+    won: Boolean,
+    forfeited: Boolean = false,
+    capturesInMatch: Int = 0,
+    homesReachedInMatch: Int = 0
+  ): Int {
+    val winOrLossPts = when {
+      forfeited -> -25
+      won -> 100
+      else -> -15
+    }
+    val capturePts = capturesInMatch.coerceAtLeast(0) * 25
+    val homePts = homesReachedInMatch.coerceAtLeast(0) * 15
+    return winOrLossPts + capturePts + homePts
+  }
+
+  /**
+   * Tactical AI evaluator for a single die.
    */
   fun chooseBestMove(
     tokens: List<Int>,
     color: PlayerColor,
-    diceValue: Int
+    diceValue: Int,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
   ): Int? {
-    val legalIndices = getLegalMoveTokenIndices(tokens, color, diceValue)
+    val legalIndices = getLegalMoveTokenIndices(tokens, color, diceValue, seats, armCount)
     if (legalIndices.isEmpty()) return null
     if (legalIndices.size == 1) return legalIndices.first()
 
     return legalIndices.maxByOrNull { idx ->
-      scoreMove(tokens, color, idx, diceValue)
+      scoreMove(tokens, color, idx, diceValue, seats, armCount)
     }
+  }
+
+  /**
+   * Tactical AI evaluator for dual-dice: selects which available die (0 or 1) and token
+   * produces the highest tactical value.
+   */
+  fun chooseBestDieAndMove(
+    tokens: List<Int>,
+    color: PlayerColor,
+    diceValues: List<Int>,
+    diceUsed: List<Boolean>,
+    seats: List<PlayerSeat> = emptyList(),
+    armCount: Int = 4
+  ): Pair<Int, Int>? {
+    var bestPair: Pair<Int, Int>? = null
+    var bestScore = Int.MIN_VALUE
+
+    for (dieIdx in 0..1) {
+      if (diceUsed.getOrElse(dieIdx) { true }) continue
+      val dVal = diceValues.getOrElse(dieIdx) { 0 }
+      val legal = getLegalMoveTokenIndices(tokens, color, dVal, seats, armCount)
+      for (tokIdx in legal) {
+        // Prioritize playing a 6 first if pawns are in the yard so the 2nd die can move the deployed pawn
+        val s = scoreMove(tokens, color, tokIdx, dVal, seats, armCount) +
+          (if (dVal == 6 && tokens.getOrElse(tokIdx) { YARD_POS } == YARD_POS) 40 else 0)
+        if (s > bestScore) {
+          bestScore = s
+          bestPair = dieIdx to tokIdx
+        }
+      }
+    }
+    return bestPair
   }
 
   private fun scoreMove(
     tokens: List<Int>,
     color: PlayerColor,
     tokenIndex: Int,
-    diceValue: Int
+    diceValue: Int,
+    seats: List<PlayerSeat>,
+    armCount: Int
   ): Int {
-    val currentPos = tokens[tokenIndex]
+    val goalPos = homeGoalPos(armCount)
+    val maxMainRel = maxMainTrackRel(armCount)
+    val safeIndices = safeGlobalIndices(armCount)
+    val currentPos = tokens.getOrElse(tokenIndex) { YARD_POS }
     val targetPos = if (currentPos == YARD_POS) 0 else currentPos + diceValue
     var score = 0
 
     if (currentPos == YARD_POS) {
       score += 85
     }
-    if (targetPos == HOME_GOAL_POS) {
+    if (targetPos == goalPos) {
       score += 110
     }
-    if (targetPos in 51..55 && currentPos <= MAX_MAIN_TRACK_REL) {
-      score += 75 // Entering safe home stretch
+    if (targetPos in (maxMainRel + 1) until goalPos && currentPos <= maxMainRel) {
+      score += 75
     }
 
-    val targetGlobal = toGlobalTrackIndex(color, targetPos)
+    val targetGlobal = toGlobalTrackIndex(color, targetPos, seats, armCount)
     if (targetGlobal != null) {
-      // Check if captures an opponent
-      if (targetGlobal !in SAFE_GLOBAL_INDICES) {
-        val opponentCount = (0 until 16).count { otherIdx ->
+      if (targetGlobal !in safeIndices) {
+        val opponentCount = tokens.indices.count { otherIdx ->
           val otherColor = colorForTokenIndex(otherIdx)
-          otherColor != color && toGlobalTrackIndex(otherColor, tokens[otherIdx]) == targetGlobal
+          otherColor != color && toGlobalTrackIndex(otherColor, tokens[otherIdx], seats, armCount) == targetGlobal
         }
         if (opponentCount == 1) {
           score += 130
         }
       }
 
-      // Check if lands on safe star/start square
-      if (targetGlobal in SAFE_GLOBAL_INDICES) {
+      if (targetGlobal in safeIndices) {
         score += 60
       }
 
-      // Check if forms a same-color blockade
       val friendlyOnTarget = tokenIndicesForColor(color).count { friendIdx ->
-        friendIdx != tokenIndex && toGlobalTrackIndex(color, tokens[friendIdx]) == targetGlobal
+        friendIdx != tokenIndex &&
+          friendIdx < tokens.size &&
+          toGlobalTrackIndex(color, tokens[friendIdx], seats, armCount) == targetGlobal
       }
       if (friendlyOnTarget >= 1) {
         score += 55
       }
     }
 
-    // Prefer advancing tokens closer to home
     score += targetPos.coerceAtLeast(0)
     return score
   }

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.Button
@@ -40,6 +41,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,6 +97,12 @@ fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
   awaitClose { removeAuthStateListener(listener) }
 }
 
+/**
+ * Automatically checks for any Google account on the device at startup using
+ * setFilterByAuthorizedAccounts(false) and setAutoSelectEnabled(true), so the
+ * device's one-tap Google account sheet opens automatically on launch without
+ * requiring the user to press a button first.
+ */
 fun attemptAutoSignIn(
   context: Context,
   credentialManager: CredentialManager,
@@ -114,7 +122,7 @@ fun attemptAutoSignIn(
   }
 
   val googleIdOption = GetGoogleIdOption.Builder()
-    .setFilterByAuthorizedAccounts(true)
+    .setFilterByAuthorizedAccounts(false)
     .setServerClientId(clientId)
     .setAutoSelectEnabled(true)
     .build()
@@ -125,7 +133,8 @@ fun attemptAutoSignIn(
 
   scope.launch {
     try {
-      val result = credentialManager.getCredential(context, request)
+      val activityContext = context as? Activity ?: context
+      val result = credentialManager.getCredential(activityContext, request)
       val credential = result.credential
       if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
         val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -135,6 +144,9 @@ fun attemptAutoSignIn(
       } else {
         onUnauthenticated()
       }
+    } catch (e: GetCredentialCancellationException) {
+      Log.w("Auth", "One-tap startup Google Sign-In dismissed: ${e.message}", e)
+      onUnauthenticated()
     } catch (e: Exception) {
       onUnauthenticated()
     }
@@ -205,7 +217,8 @@ fun signOutUser(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AuthScreen(
-  onAuthSuccess: () -> Unit
+  onAuthSuccess: () -> Unit,
+  onPlayOfflineImmediately: () -> Unit = {}
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
@@ -241,7 +254,6 @@ fun AuthScreen(
           .padding(horizontal = 24.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
-        // Four-player color pip bar
         Row(
           horizontalArrangement = Arrangement.spacedBy(10.dp),
           verticalAlignment = Alignment.CenterVertically
@@ -289,7 +301,7 @@ fun AuthScreen(
               contentDescription = "3D Isometric Ludo Board Preview",
               modifier = Modifier
                 .fillMaxWidth()
-                .height(190.dp),
+                .height(180.dp),
               contentScale = ContentScale.Crop
             )
 
@@ -316,7 +328,7 @@ fun AuthScreen(
           }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         if (errorMessage != null) {
           Card(
@@ -361,7 +373,7 @@ fun AuthScreen(
           enabled = !isLoading,
           modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .height(54.dp)
             .testTag("google_sign_in_button"),
           shape = RoundedCornerShape(16.dp),
           colors = ButtonDefaults.buttonColors(
@@ -388,6 +400,30 @@ fun AuthScreen(
               fontWeight = FontWeight.SemiBold
             )
           }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+          onClick = onPlayOfflineImmediately,
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .testTag("play_offline_immediately_button"),
+          shape = RoundedCornerShape(16.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = null,
+            tint = BrushedBrass,
+            modifier = Modifier.size(20.dp)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "Play Offline 3D Studio Immediately",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+          )
         }
       }
     }

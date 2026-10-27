@@ -10,8 +10,17 @@
     <string name="offline_studio_title">Offline 3D Studio</string>
     <string name="offline_studio_desc">Play locally with Tactical AI Bots or Pass-and-Play.</string>
     <string name="rules_button_label">Live Ludo Rules</string>
-    <string name="roll_dice_action">ROLL 3D DIE</string>
-    <string name="select_token_prompt">Tap a glowing 3D pawn on the board</string>
+    <string name="roll_dice_action">ROLL 2 DICE</string>
+    <string name="select_token_prompt">Tap a glowing 3D pawn for the selected die</string>
     <string name="reset_camera_desc">Reset 3D Camera</string>
     <string name="sign_out_label">Sign Out</string>
+    <string name="leaderboard_title">Global &amp; Country Ranks</string>
+    <string name="audio_call_group">Group Voice</string>
+    <string name="audio_call_direct">1-on-1 Call</string>
+    <string name="speed_control_label">Pawn Speed</string>
+    <string name="daily_challenges_title">Daily Challenges</string>
+    <string name="daily_challenges_subtitle">Complete missions to earn Royal Coins &amp; XP</string>
+    <string name="sound_toggle_label">Toggle Game Sound</string>
+    <string name="store_button_label">Store</string>
+    <string name="admin_button_label">Admin</string>
 </resources>
