@@ -36,13 +36,17 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.Visibility
@@ -58,6 +62,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +89,7 @@ import com.example.data.RoomStatus
 import com.example.data.TurnPhase
 import com.example.domain.LudoRulesEngine
 import com.example.ui.audio.AudioCallUiState
+import com.example.ui.audio.HapticFeedbackManager
 import com.example.ui.board3d.Interactive3DDiceCube
 import com.example.ui.board3d.Interactive3DLudoBoard
 import com.example.ui.board3d.ParticleSystemOverlay
@@ -105,8 +112,16 @@ fun GameArenaScreen(
   }
 
   val context = LocalContext.current
+  val localView = LocalView.current
   val audioCallState by viewModel.audioCallState.collectAsStateWithLifecycle()
   var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+  LaunchedEffect(uiState.hapticPulseSequence) {
+    val spec = uiState.activeHapticSpec
+    if (uiState.hapticPulseSequence > 0L && uiState.isHapticsEnabled && spec != null) {
+      HapticFeedbackManager.performHardwareHaptic(context, localView, spec)
+    }
+  }
 
   val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission()
@@ -252,6 +267,30 @@ fun GameArenaScreen(
             onEmojiSelected = { viewModel.sendQuickEmojiReaction(it) }
           )
 
+          AnimatedVisibility(
+            visible = uiState.isRoomChatOpen,
+            enter = fadeIn(),
+            exit = fadeOut()
+          ) {
+            Column {
+              Spacer(modifier = Modifier.height(4.dp))
+              PrivateRoomLiveChatCard(
+                roomCode = uiState.roomCode.ifBlank { "PRV409" },
+                isPublicRoom = uiState.isPublicRoom,
+                messages = uiState.roomChatMessages,
+                draftText = uiState.chatDraftText,
+                profanityNotice = uiState.lastProfanityFilterNotice,
+                currentUserId = viewModel.currentUserId,
+                onDraftChanged = { viewModel.updateChatDraftText(it) },
+                onSendClicked = { viewModel.sendRoomChatMessage() },
+                onQuickReplyClicked = { viewModel.sendQuickReplyChat(it) },
+                onDismissProfanityNotice = { viewModel.clearProfanityNotice() },
+                onClosePanel = { viewModel.toggleRoomChat(false) },
+                modifier = Modifier.testTag("private_room_arena_chat_panel")
+              )
+            }
+          }
+
           Spacer(modifier = Modifier.height(4.dp))
 
           DualDiceAndTurnControlDock(uiState = uiState, viewModel = viewModel)
@@ -376,6 +415,65 @@ private fun ArenaTopBar(
         )
       }
 
+      // Private Room Live Chat Toggle Button + Unread Badge
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(50))
+          .background(
+            if (uiState.isRoomChatOpen) BrushedBrass.copy(alpha = 0.22f)
+            else MaterialTheme.colorScheme.surface
+          )
+          .border(1.dp, BrushedBrass, RoundedCornerShape(50))
+          .clickable { viewModel.toggleRoomChat() }
+          .padding(horizontal = 9.dp, vertical = 6.dp)
+          .testTag("arena_chat_toggle_button"),
+        contentAlignment = Alignment.Center
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Chat,
+            contentDescription = "Toggle Private Room Chat",
+            tint = BrushedBrass,
+            modifier = Modifier.size(15.dp)
+          )
+          Text(
+            text = if (uiState.unreadChatCount > 0) "Chat (${uiState.unreadChatCount})" else "Chat",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (uiState.isRoomChatOpen || uiState.unreadChatCount > 0) {
+              BrushedBrass
+            } else {
+              MaterialTheme.colorScheme.onSurface
+            }
+          )
+        }
+      }
+
+      // In-Game HUD Overlay Toggle Chip
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(50))
+          .background(
+            if (uiState.isHudOverlayVisible) BrushedBrass.copy(alpha = 0.22f)
+            else MaterialTheme.colorScheme.surface
+          )
+          .border(1.dp, BrushedBrass, RoundedCornerShape(50))
+          .clickable { viewModel.toggleHudOverlayVisibility() }
+          .padding(horizontal = 9.dp, vertical = 6.dp)
+          .testTag("arena_hud_toggle_button"),
+        contentAlignment = Alignment.Center
+      ) {
+        Text(
+          text = if (uiState.isHudOverlayVisible) "HUD ON" else "HUD OFF",
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Bold,
+          color = if (uiState.isHudOverlayVisible) BrushedBrass else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+
       IconButton(
         onClick = { viewModel.toggleSoundEnabled() },
         modifier = Modifier.testTag("arena_sound_toggle_button")
@@ -388,6 +486,17 @@ private fun ArenaTopBar(
           },
           contentDescription = stringResource(R.string.sound_toggle_label),
           tint = if (uiState.isSoundEnabled) BrushedBrass else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+
+      IconButton(
+        onClick = { viewModel.toggleHapticsEnabled() },
+        modifier = Modifier.testTag("arena_haptics_toggle_button")
+      ) {
+        Icon(
+          imageVector = Icons.Default.Vibration,
+          contentDescription = if (uiState.isHapticsEnabled) "Haptic Feedback ON" else "Haptic Feedback OFF",
+          tint = if (uiState.isHapticsEnabled) BrushedBrass else MaterialTheme.colorScheme.onSurfaceVariant
         )
       }
 
@@ -933,25 +1042,45 @@ private fun BoardViewportWithBanner(
       modifier = Modifier.fillMaxSize()
     )
 
-    // Architectural status toast pill at top of 3D viewport
-    val (turnColorPrimary, _, _) = paletteForColor(uiState.currentTurnColor)
-    Box(
+    // In-Game HUD Overlay (Current Turn Indicator, Active Pawns on Board, Remaining Moves & Player Stats)
+    Column(
       modifier = Modifier
         .align(Alignment.TopCenter)
-        .padding(top = 6.dp)
-        .clip(RoundedCornerShape(50))
-        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-        .border(1.dp, turnColorPrimary.copy(alpha = 0.6f), RoundedCornerShape(50))
-        .padding(horizontal = 16.dp, vertical = 6.dp)
+        .fillMaxWidth()
+        .padding(horizontal = 8.dp, vertical = 6.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-      Text(
-        text = uiState.statusBanner,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurface,
-        textAlign = TextAlign.Center,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-      )
+      AnimatedVisibility(
+        visible = uiState.isHudOverlayVisible,
+        enter = fadeIn(),
+        exit = fadeOut()
+      ) {
+        InGamePlayerStatsHudOverlay(
+          uiState = uiState,
+          onToggleExpanded = { viewModel.toggleHudOverlayExpanded() }
+        )
+      }
+
+      // Architectural status toast pill below HUD
+      val (turnColorPrimary, _, _) = paletteForColor(uiState.currentTurnColor)
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(50))
+          .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.90f))
+          .border(1.dp, turnColorPrimary.copy(alpha = 0.6f), RoundedCornerShape(50))
+          .padding(horizontal = 14.dp, vertical = 4.dp)
+          .testTag("arena_status_banner_pill")
+      ) {
+        Text(
+          text = uiState.statusBanner,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurface,
+          textAlign = TextAlign.Center,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
     }
 
     // Floating Emoji Reaction Bubble
@@ -980,6 +1109,306 @@ private fun BoardViewportWithBanner(
         )
       }
     }
+  }
+}
+
+@Composable
+private fun InGamePlayerStatsHudOverlay(
+  uiState: LudoUiState,
+  onToggleExpanded: () -> Unit
+) {
+  val telemetry = uiState.hudTelemetry
+  val activeStats = telemetry.activePlayerStats
+  val (turnPrimary, _, turnSoft) = paletteForColor(telemetry.currentTurnColor)
+  val timerFraction = (uiState.turnSecondsRemaining.toFloat() / LudoUiState.TURN_DURATION_SECONDS.toFloat())
+    .coerceIn(0f, 1f)
+
+  Card(
+    modifier = Modifier
+      .fillMaxWidth()
+      .border(1.2.dp, turnPrimary.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+      .testTag("in_game_stats_hud_overlay"),
+    shape = RoundedCornerShape(16.dp),
+    colors = CardDefaults.cardColors(
+      containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.93f)
+    )
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 10.dp, vertical = 7.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+      // Top Row: Current Turn Indicator + Phase Badge + Timer + Expand Toggle
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .testTag("hud_current_turn_indicator"),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(7.dp),
+          modifier = Modifier.weight(1f)
+        ) {
+          Box(
+            modifier = Modifier
+              .size(12.dp)
+              .clip(CircleShape)
+              .background(turnPrimary)
+              .border(1.5.dp, BrushedBrass, CircleShape)
+          )
+          Text(
+            text = "TURN #${telemetry.turnNumber} • ${telemetry.currentTurnPlayerName.uppercase()}",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.ExtraBold,
+            color = turnPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+          Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = turnSoft.copy(alpha = 0.32f),
+            modifier = Modifier.border(1.dp, turnPrimary.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+          ) {
+            Text(
+              text = telemetry.turnPhaseBadge,
+              style = MaterialTheme.typography.labelSmall,
+              fontWeight = FontWeight.Bold,
+              color = turnPrimary,
+              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+            )
+          }
+        }
+
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          Text(
+            text = "${uiState.turnSecondsRemaining}s",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (uiState.turnSecondsRemaining <= 5) TerracottaRed else MaterialTheme.colorScheme.onSurfaceVariant
+          )
+          Surface(
+            onClick = onToggleExpanded,
+            shape = RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+              .border(1.dp, BrushedBrass.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
+              .testTag("hud_toggle_details_button")
+          ) {
+            Text(
+              text = if (uiState.isHudOverlayExpanded) "Hide Table ▲" else "All Players ▼",
+              style = MaterialTheme.typography.labelSmall,
+              fontWeight = FontWeight.Bold,
+              color = BrushedBrass,
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+          }
+        }
+      }
+
+      if (uiState.isHapticsEnabled && uiState.lastTriggeredHapticTitle.isNotBlank()) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("hud_last_haptic_badge"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Vibration,
+            contentDescription = null,
+            tint = BrushedBrass,
+            modifier = Modifier.size(12.dp)
+          )
+          Text(
+            text = "Haptic Pulse: ${uiState.lastTriggeredHapticTitle}",
+            style = MaterialTheme.typography.labelSmall,
+            color = BrushedBrass,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
+      }
+
+      // Live Turn Countdown Bar
+      LinearProgressIndicator(
+        progress = { timerFraction },
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(3.dp)
+          .clip(RoundedCornerShape(2.dp)),
+        color = if (uiState.turnSecondsRemaining <= 5) TerracottaRed else turnPrimary,
+        trackColor = MaterialTheme.colorScheme.surfaceVariant
+      )
+
+      // 3-Column Tactical Metrics Strip: Active Pawns on Board | Remaining Moves | Victory Distance
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        // 1. Active Pawns on Board Metric
+        HudMetricPill(
+          label = "ACTIVE PAWNS",
+          primaryValue = "${activeStats.activePawnsOnBoard}/4 On Board",
+          subValue = "${activeStats.pawnsInYard} Yard • ${activeStats.pawnsAtHomeGoal}/4 Home",
+          accentColor = turnPrimary,
+          modifier = Modifier
+            .weight(1f)
+            .testTag("hud_active_pawns_metric")
+        )
+
+        // 2. Remaining Moves Metric
+        val remainingMovesHeadline = when (telemetry.turnPhase) {
+          TurnPhase.ROLL -> "2 Dice to Roll"
+          TurnPhase.MOVE -> "${telemetry.remainingDiceMovesInTurn} Move${if (telemetry.remainingDiceMovesInTurn == 1) "" else "s"} Left (+${telemetry.remainingDicePipsInTurn})"
+          TurnPhase.GAME_OVER -> "0 Moves Left"
+        }
+        val remainingMovesSub = when (telemetry.turnPhase) {
+          TurnPhase.MOVE -> "${telemetry.legalMovablePawnCount} Legal Pawn${if (telemetry.legalMovablePawnCount == 1) "" else "s"} • ${telemetry.activeDieLabel}"
+          TurnPhase.ROLL -> "Tap 3D Dice to Roll"
+          TurnPhase.GAME_OVER -> "Match Complete"
+        }
+        HudMetricPill(
+          label = "REMAINING MOVES",
+          primaryValue = remainingMovesHeadline,
+          subValue = remainingMovesSub,
+          accentColor = BrushedBrass,
+          modifier = Modifier
+            .weight(1f)
+            .testTag("hud_remaining_moves_metric")
+        )
+
+        // 3. Remaining Tiles to Victory & Progress Metric
+        HudMetricPill(
+          label = "VICTORY PROGRESS",
+          primaryValue = "${activeStats.raceProgressPercent}% Complete",
+          subValue = "${activeStats.totalRemainingTilesToVictory} Tiles Left",
+          accentColor = EucalyptusSage,
+          modifier = Modifier
+            .weight(1f)
+            .testTag("hud_victory_distance_metric")
+        )
+      }
+
+      // Expandable All-Players Live Telemetry Breakdown
+      AnimatedVisibility(
+        visible = uiState.isHudOverlayExpanded,
+        enter = fadeIn(),
+        exit = fadeOut()
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(8.dp)
+            .testTag("hud_all_players_breakdown_panel"),
+          verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+          telemetry.allPlayerStats.forEach { playerStat ->
+            val (seatPrimary, _, _) = paletteForColor(playerStat.color)
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                  if (playerStat.isCurrentTurn) seatPrimary.copy(alpha = 0.14f)
+                  else Color.Transparent
+                )
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1.1f)
+              ) {
+                Box(
+                  modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(seatPrimary)
+                )
+                Text(
+                  text = if (playerStat.isCurrentTurn) "▶ ${playerStat.playerName}" else playerStat.playerName,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = if (playerStat.isCurrentTurn) FontWeight.ExtraBold else FontWeight.Medium,
+                  color = if (playerStat.isCurrentTurn) seatPrimary else MaterialTheme.colorScheme.onSurface,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
+                )
+              }
+
+              Text(
+                text = "Active: ${playerStat.activePawnsOnBoard}/4 • Home: ${playerStat.pawnsAtHomeGoal}/4",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1.3f),
+                textAlign = TextAlign.Center
+              )
+
+              Text(
+                text = "${playerStat.totalRemainingTilesToVictory} tiles (${playerStat.raceProgressPercent}%)",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = seatPrimary,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.End
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun HudMetricPill(
+  label: String,
+  primaryValue: String,
+  subValue: String,
+  accentColor: Color,
+  modifier: Modifier = Modifier
+) {
+  Column(
+    modifier = modifier
+      .clip(RoundedCornerShape(10.dp))
+      .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+      .border(1.dp, accentColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+      .padding(horizontal = 7.dp, vertical = 4.dp),
+    verticalArrangement = Arrangement.spacedBy(1.dp)
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelSmall,
+      color = accentColor,
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+    Text(
+      text = primaryValue,
+      style = MaterialTheme.typography.labelMedium,
+      fontWeight = FontWeight.Bold,
+      color = MaterialTheme.colorScheme.onSurface,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+    Text(
+      text = subValue,
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
   }
 }
 
@@ -1090,119 +1519,265 @@ private fun DualDiceAndTurnControlDock(
     shape = RoundedCornerShape(22.dp),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
   ) {
-    Row(
+    Column(
       modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 12.dp, vertical = 8.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.SpaceBetween
+      verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-      // Dual 3D Dice Tray (Die 1 and Die 2 side by side)
+      // Sequential Dual-Dice Step & Firestore Sync Header Strip
       Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(10.dp))
+          .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+          .padding(horizontal = 10.dp, vertical = 5.dp)
+          .testTag("dual_dice_sequence_step_badge"),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
       ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-          Interactive3DDiceCube(
-            diceValue = uiState.diceValue,
-            isRolling = uiState.isDiceRolling,
-            activeColor = uiState.currentTurnColor,
-            enabled = canRoll || (canSelectDie && !uiState.dice1Used),
-            isSelected = uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 && !uiState.dice1Used,
-            isUsed = uiState.turnPhase == TurnPhase.MOVE && uiState.dice1Used,
-            onRollOrSelectClicked = {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.weight(1f)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Casino,
+            contentDescription = null,
+            tint = BrushedBrass,
+            modifier = Modifier.size(14.dp)
+          )
+          Text(
+            text = uiState.sequentialMoveStepLabel,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = BrushedBrass,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
+
+        // Interactive Die #1 / Die #2 Sequential Selector Chips
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          val die1Selected = uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 && !uiState.dice1Used
+          val die2Selected = uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 && !uiState.dice2Used
+
+          Surface(
+            onClick = {
               if (uiState.turnPhase == TurnPhase.ROLL) {
                 viewModel.onRollDiceClicked()
               } else {
                 viewModel.onSelectDie(0)
               }
             },
-            sizeDp = 58.dp,
-            testTagName = "dice_3d_cube_1"
-          )
-          Text(
-            text = when {
-              uiState.turnPhase == TurnPhase.MOVE && uiState.dice1Used -> "USED"
-              uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 -> "DIE 1 (+${uiState.diceValue})"
-              else -> "DIE 1"
+            enabled = canRoll || (canSelectDie && !uiState.dice1Used),
+            shape = RoundedCornerShape(999.dp),
+            color = when {
+              uiState.turnPhase == TurnPhase.MOVE && uiState.dice1Used ->
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
+              die1Selected -> BrushedBrass.copy(alpha = 0.24f)
+              else -> MaterialTheme.colorScheme.surface
             },
-            style = MaterialTheme.typography.labelSmall,
-            color = if (uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 && !uiState.dice1Used) {
-              BrushedBrass
-            } else {
-              MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            fontWeight = FontWeight.Bold
-          )
-        }
+            modifier = Modifier
+              .border(
+                width = if (die1Selected) 1.5.dp else 1.dp,
+                color = if (die1Selected) BrushedBrass else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(999.dp)
+              )
+              .testTag("select_die_1_chip")
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+              if (die1Selected) {
+                Icon(
+                  imageVector = Icons.Default.CheckCircle,
+                  contentDescription = null,
+                  tint = BrushedBrass,
+                  modifier = Modifier.size(11.dp)
+                )
+              }
+              Text(
+                text = if (uiState.turnPhase == TurnPhase.MOVE && uiState.dice1Used) {
+                  "Die #1 (Used)"
+                } else {
+                  "Die #1 (+${uiState.diceValue})"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (die1Selected) FontWeight.ExtraBold else FontWeight.Medium,
+                color = if (die1Selected) BrushedBrass else MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+          }
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-          Interactive3DDiceCube(
-            diceValue = uiState.diceValue2,
-            isRolling = uiState.isDiceRolling,
-            activeColor = uiState.currentTurnColor,
-            enabled = canRoll || (canSelectDie && !uiState.dice2Used),
-            isSelected = uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 && !uiState.dice2Used,
-            isUsed = uiState.turnPhase == TurnPhase.MOVE && uiState.dice2Used,
-            onRollOrSelectClicked = {
+          Surface(
+            onClick = {
               if (uiState.turnPhase == TurnPhase.ROLL) {
                 viewModel.onRollDiceClicked()
               } else {
                 viewModel.onSelectDie(1)
               }
             },
-            sizeDp = 58.dp,
-            testTagName = "dice_3d_cube_2"
-          )
-          Text(
-            text = when {
-              uiState.turnPhase == TurnPhase.MOVE && uiState.dice2Used -> "USED"
-              uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 -> "DIE 2 (+${uiState.diceValue2})"
-              else -> "DIE 2"
+            enabled = canRoll || (canSelectDie && !uiState.dice2Used),
+            shape = RoundedCornerShape(999.dp),
+            color = when {
+              uiState.turnPhase == TurnPhase.MOVE && uiState.dice2Used ->
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
+              die2Selected -> BrushedBrass.copy(alpha = 0.24f)
+              else -> MaterialTheme.colorScheme.surface
             },
-            style = MaterialTheme.typography.labelSmall,
-            color = if (uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 && !uiState.dice2Used) {
-              BrushedBrass
-            } else {
-              MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            fontWeight = FontWeight.Bold
-          )
+            modifier = Modifier
+              .border(
+                width = if (die2Selected) 1.5.dp else 1.dp,
+                color = if (die2Selected) BrushedBrass else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(999.dp)
+              )
+              .testTag("select_die_2_chip")
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+              if (die2Selected) {
+                Icon(
+                  imageVector = Icons.Default.CheckCircle,
+                  contentDescription = null,
+                  tint = BrushedBrass,
+                  modifier = Modifier.size(11.dp)
+                )
+              }
+              Text(
+                text = if (uiState.turnPhase == TurnPhase.MOVE && uiState.dice2Used) {
+                  "Die #2 (Used)"
+                } else {
+                  "Die #2 (+${uiState.diceValue2})"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (die2Selected) FontWeight.ExtraBold else FontWeight.Medium,
+                color = if (die2Selected) BrushedBrass else MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+          }
         }
       }
 
-      Spacer(modifier = Modifier.width(10.dp))
-
-      Column(
-        modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
       ) {
-        Text(
-          text = activeSeat?.name ?: uiState.currentTurnColor.label,
-          style = MaterialTheme.typography.titleSmall,
-          color = turnColor,
-          fontWeight = FontWeight.Bold,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis
-        )
-        Text(
-          text = when {
-            uiState.isSpectating -> {
-              val roomKind = if (uiState.isPublicRoom) "Public" else "Private"
-              "👁️ Observing $roomKind Room #${uiState.roomCode} • ${activeSeat?.name ?: "Player"}'s turn (Board Locked)"
-            }
-            uiState.isDiceRolling -> "Tumbling 2 3D dice..."
-            uiState.turnPhase == TurnPhase.MOVE ->
-              "Tap Die 1 or Die 2, then tap a glowing pawn"
-            canRoll -> "Tap dice or button to roll 2 dice"
-            else -> "Waiting for ${activeSeat?.name ?: "player"}..."
-          },
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis
-        )
-      }
+        // Dual 3D Dice Tray (Die 1 and Die 2 side by side)
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Interactive3DDiceCube(
+              diceValue = uiState.diceValue,
+              isRolling = uiState.isDiceRolling,
+              activeColor = uiState.currentTurnColor,
+              enabled = canRoll || (canSelectDie && !uiState.dice1Used),
+              isSelected = uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 && !uiState.dice1Used,
+              isUsed = uiState.turnPhase == TurnPhase.MOVE && uiState.dice1Used,
+              onRollOrSelectClicked = {
+                if (uiState.turnPhase == TurnPhase.ROLL) {
+                  viewModel.onRollDiceClicked()
+                } else {
+                  viewModel.onSelectDie(0)
+                }
+              },
+              sizeDp = 58.dp,
+              testTagName = "dice_3d_cube_1"
+            )
+            Text(
+              text = when {
+                uiState.turnPhase == TurnPhase.MOVE && uiState.dice1Used -> "USED"
+                uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 -> "DIE 1 (+${uiState.diceValue})"
+                else -> "DIE 1"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = if (uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 0 && !uiState.dice1Used) {
+                BrushedBrass
+              } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+              },
+              fontWeight = FontWeight.Bold
+            )
+          }
+
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Interactive3DDiceCube(
+              diceValue = uiState.diceValue2,
+              isRolling = uiState.isDiceRolling,
+              activeColor = uiState.currentTurnColor,
+              enabled = canRoll || (canSelectDie && !uiState.dice2Used),
+              isSelected = uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 && !uiState.dice2Used,
+              isUsed = uiState.turnPhase == TurnPhase.MOVE && uiState.dice2Used,
+              onRollOrSelectClicked = {
+                if (uiState.turnPhase == TurnPhase.ROLL) {
+                  viewModel.onRollDiceClicked()
+                } else {
+                  viewModel.onSelectDie(1)
+                }
+              },
+              sizeDp = 58.dp,
+              testTagName = "dice_3d_cube_2"
+            )
+            Text(
+              text = when {
+                uiState.turnPhase == TurnPhase.MOVE && uiState.dice2Used -> "USED"
+                uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 -> "DIE 2 (+${uiState.diceValue2})"
+                else -> "DIE 2"
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = if (uiState.turnPhase == TurnPhase.MOVE && uiState.selectedDieIndex == 1 && !uiState.dice2Used) {
+                BrushedBrass
+              } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+              },
+              fontWeight = FontWeight.Bold
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.width(10.dp))
+
+        Column(
+          modifier = Modifier.weight(1f),
+          verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+          Text(
+            text = activeSeat?.name ?: uiState.currentTurnColor.label,
+            style = MaterialTheme.typography.titleSmall,
+            color = turnColor,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+          Text(
+            text = when {
+              uiState.isSpectating -> {
+                val roomKind = if (uiState.isPublicRoom) "Public" else "Private"
+                "👁️ Observing $roomKind Room #${uiState.roomCode} • ${uiState.lastSyncedDieChoiceSummary}"
+              }
+              uiState.isDiceRolling -> "Tumbling 2 3D dice..."
+              uiState.turnPhase == TurnPhase.MOVE ->
+                uiState.lastSyncedDieChoiceSummary
+              canRoll -> "Tap dice or button to roll 2 dice"
+              else -> "Waiting for ${activeSeat?.name ?: "player"}..."
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
 
       Spacer(modifier = Modifier.width(8.dp))
 
@@ -1280,6 +1855,7 @@ private fun DualDiceAndTurnControlDock(
             fontWeight = FontWeight.Bold
           )
         }
+      }
       }
     }
   }

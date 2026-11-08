@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,18 +31,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Palette
@@ -102,6 +107,9 @@ import com.example.data.FriendsStudioCatalog
 import com.example.data.LudoRoom
 import com.example.data.PlayerColor
 import com.example.data.PlayerProfile
+import com.example.data.PrivateRoomChatCatalog
+import com.example.data.QuickReplyChatOption
+import com.example.data.RoomChatMessage
 import com.example.ui.auth.onGoogleSignInClicked
 import com.example.ui.board3d.paletteForColor
 import com.example.ui.theme.BrushedBrass
@@ -1940,6 +1948,22 @@ fun WaitingRoomScreen(
           }
         }
 
+        // Private Room Real-Time Text Chat Card (Firestore Synced + Profanity Filter + Quick-Reply Emojis)
+        PrivateRoomLiveChatCard(
+          roomCode = uiState.roomCode.ifBlank { "PRV409" },
+          isPublicRoom = uiState.isPublicRoom,
+          messages = uiState.roomChatMessages,
+          draftText = uiState.chatDraftText,
+          profanityNotice = uiState.lastProfanityFilterNotice,
+          currentUserId = viewModel.currentUserId,
+          onDraftChanged = { viewModel.updateChatDraftText(it) },
+          onSendClicked = { viewModel.sendRoomChatMessage() },
+          onQuickReplyClicked = { viewModel.sendQuickReplyChat(it) },
+          onDismissProfanityNotice = { viewModel.clearProfanityNotice() },
+          onClosePanel = null,
+          modifier = Modifier.testTag("private_room_waiting_chat_card")
+        )
+
         if (uiState.isHost) {
           Column(
             modifier = Modifier.fillMaxWidth(),
@@ -2094,3 +2118,303 @@ private fun RuleSection(title: String, body: String) {
     )
   }
 }
+
+@Composable
+fun PrivateRoomLiveChatCard(
+  roomCode: String,
+  isPublicRoom: Boolean,
+  messages: List<RoomChatMessage>,
+  draftText: String,
+  profanityNotice: String?,
+  currentUserId: String?,
+  onDraftChanged: (String) -> Unit,
+  onSendClicked: () -> Unit,
+  onQuickReplyClicked: (QuickReplyChatOption) -> Unit,
+  onDismissProfanityNotice: () -> Unit,
+  onClosePanel: (() -> Unit)? = null,
+  modifier: Modifier = Modifier
+) {
+  Card(
+    modifier = modifier
+      .fillMaxWidth()
+      .border(1.dp, BrushedBrass.copy(alpha = 0.55f), RoundedCornerShape(22.dp)),
+    shape = RoundedCornerShape(22.dp),
+    colors = CardDefaults.cardColors(
+      containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)
+    )
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(14.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      // Header Row
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Chat,
+            contentDescription = "Private Room Chat",
+            tint = BrushedBrass,
+            modifier = Modifier.size(18.dp)
+          )
+          Column {
+            Text(
+              text = if (isPublicRoom) "Room #$roomCode Live Chat" else "Private Room #$roomCode Chat",
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "Firestore Real-Time Sync • Quick-Reply Emojis",
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+          }
+        }
+
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          // Profanity Filter Status Badge
+          Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = EucalyptusSage.copy(alpha = 0.16f),
+            modifier = Modifier.testTag("chat_profanity_filter_badge")
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.Shield,
+                contentDescription = "Profanity Filter Active",
+                tint = EucalyptusSage,
+                modifier = Modifier.size(12.dp)
+              )
+              Text(
+                text = "Profanity Filter ON",
+                style = MaterialTheme.typography.labelSmall,
+                color = EucalyptusSage,
+                fontWeight = FontWeight.SemiBold
+              )
+            }
+          }
+
+          if (onClosePanel != null) {
+            IconButton(
+              onClick = onClosePanel,
+              modifier = Modifier
+                .size(32.dp)
+                .testTag("close_room_chat_panel_button")
+            ) {
+              Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Close Chat Panel",
+                modifier = Modifier.size(18.dp)
+              )
+            }
+          }
+        }
+      }
+
+      // Profanity Filter Active Warning Banner if triggered
+      if (!profanityNotice.isNullOrBlank()) {
+        Surface(
+          shape = RoundedCornerShape(12.dp),
+          color = TerracottaRed.copy(alpha = 0.14f),
+          modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, TerracottaRed.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            .testTag("profanity_filter_notice_banner")
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = profanityNotice,
+              style = MaterialTheme.typography.labelSmall,
+              color = TerracottaRed,
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onDismissProfanityNotice) {
+              Text("OK", style = MaterialTheme.typography.labelSmall)
+            }
+          }
+        }
+      }
+
+      // Message Stream List
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(14.dp))
+          .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+          .padding(10.dp)
+          .testTag("private_room_chat_messages_list"),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+      ) {
+        val visibleMessages = messages.takeLast(6)
+        if (visibleMessages.isEmpty()) {
+          Text(
+            text = "No messages yet — tap a quick-reply emoji or send a message to the room!",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        } else {
+          visibleMessages.forEach { msg ->
+            val isMine = (currentUserId != null && msg.senderUid == currentUserId) ||
+              msg.senderUid == "LOCAL_PLAYER"
+            val senderColorTone = when {
+              msg.senderColor.equals("SYSTEM", ignoreCase = true) -> BrushedBrass
+              msg.senderColor.equals("SPECTATOR", ignoreCase = true) -> EucalyptusSage
+              else -> paletteForColor(PlayerColor.fromString(msg.senderColor)).first
+            }
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(
+                  if (isMine) {
+                    BrushedBrass.copy(alpha = 0.14f)
+                  } else {
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                  }
+                )
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                  Box(
+                    modifier = Modifier
+                      .size(8.dp)
+                      .clip(CircleShape)
+                      .background(senderColorTone)
+                  )
+                  Text(
+                    text = msg.senderName,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = senderColorTone
+                  )
+                  if (msg.wasFiltered) {
+                    Text(
+                      text = "• 🛡️ Filtered",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = EucalyptusSage
+                    )
+                  }
+                }
+                Text(
+                  text = msg.messageText,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurface
+                )
+              }
+              if (msg.quickEmoji.isNotBlank()) {
+                Text(
+                  text = msg.quickEmoji,
+                  style = MaterialTheme.typography.titleMedium,
+                  modifier = Modifier.padding(start = 6.dp)
+                )
+              }
+            }
+          }
+        }
+      }
+
+      // Quick-Reply Emojis & Phrases Row
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .horizontalScroll(rememberScrollState())
+          .testTag("private_room_quick_reply_row"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        PrivateRoomChatCatalog.QUICK_REPLY_OPTIONS.forEach { option ->
+          Surface(
+            onClick = { onQuickReplyClicked(option) },
+            shape = RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+              .border(1.dp, BrushedBrass.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
+              .testTag("chat_quick_reply_${option.id}")
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+              Text(text = option.emoji, style = MaterialTheme.typography.labelMedium)
+              Text(
+                text = option.phrase,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+              )
+            }
+          }
+        }
+      }
+
+      // Text Input + Send Button Row
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        OutlinedTextField(
+          value = draftText,
+          onValueChange = onDraftChanged,
+          placeholder = {
+            Text(
+              text = "Message room #$roomCode (profanity auto-filtered)...",
+              style = MaterialTheme.typography.bodySmall
+            )
+          },
+          singleLine = true,
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier
+            .weight(1f)
+            .testTag("private_room_chat_input")
+        )
+        Button(
+          onClick = onSendClicked,
+          enabled = draftText.isNotBlank(),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier
+            .height(50.dp)
+            .testTag("private_room_chat_send_button")
+        ) {
+          Icon(
+            imageVector = Icons.AutoMirrored.Filled.Send,
+            contentDescription = "Send Chat Message",
+            modifier = Modifier.size(18.dp)
+          )
+          Spacer(modifier = Modifier.width(4.dp))
+          Text("Send")
+        }
+      }
+    }
+  }
+}
+

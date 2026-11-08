@@ -1096,6 +1096,31 @@ class LudoMultiplayerRepository(private val db: FirebaseFirestore) {
       }
   }
 
+  suspend fun syncSelectedDieChoice(
+    roomCode: String,
+    selectedDieIndex: Int,
+    lastEvent: String
+  ): Result<Unit> {
+    requireUserId()
+    val normalizedCode = roomCode.trim().uppercase()
+    val docRef = db.collection("rooms").document(normalizedCode)
+    return try {
+      docRef.update(
+        mapOf(
+          "selectedDieIndex" to selectedDieIndex.coerceIn(0, 1).toLong(),
+          "lastEvent" to lastEvent.take(160),
+          "updatedAt" to FieldValue.serverTimestamp()
+        )
+      ).await()
+      Result.success(Unit)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+      Result.failure(e)
+    }
+  }
+
   suspend fun sendEmojiReaction(roomCode: String, emoji: String, senderName: String): Result<Unit> {
     requireUserId()
     val normalizedCode = roomCode.trim().uppercase()
@@ -1115,6 +1140,79 @@ class LudoMultiplayerRepository(private val db: FirebaseFirestore) {
       handleFirestoreError(e, OperationType.UPDATE, docRef.path)
       Result.failure(e)
     }
+  }
+
+  suspend fun sendRoomChatMessage(
+    roomCode: String,
+    senderName: String,
+    senderColor: String,
+    rawMessageText: String,
+    quickEmoji: String = ""
+  ): Result<RoomChatMessage> {
+    val uid = requireUserId()
+    val normalizedCode = roomCode.trim().uppercase()
+    val sanitizeResult = PrivateRoomChatCatalog.sanitizeMessage(rawMessageText)
+    if (sanitizeResult.sanitizedText.isBlank()) {
+      return Result.failure(IllegalArgumentException("Chat message cannot be empty."))
+    }
+    val validColors = setOf("RED", "GREEN", "YELLOW", "BLUE", "PURPLE", "ORANGE", "TEAL", "ROSE", "SPECTATOR")
+    val safeColor = senderColor.uppercase().takeIf { it in validColors } ?: "RED"
+    val safeName = senderName.trim().ifBlank { "Royal Player" }.take(60)
+    val safeEmoji = quickEmoji.trim().take(16)
+    val messageId = "chat_" + UUID.randomUUID().toString().replace("-", "").take(16)
+    val docRef = db.collection("rooms").document(normalizedCode)
+      .collection("chatMessages").document(messageId)
+
+    return try {
+      docRef.set(
+        mapOf(
+          "senderUid" to uid,
+          "senderName" to safeName,
+          "senderColor" to safeColor,
+          "messageText" to sanitizeResult.sanitizedText,
+          "quickEmoji" to safeEmoji,
+          "wasFiltered" to sanitizeResult.wasFiltered,
+          "createdAt" to FieldValue.serverTimestamp()
+        )
+      ).await()
+
+      Result.success(
+        RoomChatMessage(
+          id = messageId,
+          senderUid = uid,
+          senderName = safeName,
+          senderColor = safeColor,
+          messageText = sanitizeResult.sanitizedText,
+          quickEmoji = safeEmoji,
+          wasFiltered = sanitizeResult.wasFiltered
+        )
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      Result.failure(e)
+    }
+  }
+
+  fun observeRoomChatMessages(roomCode: String, limit: Long = 50L): Flow<List<RoomChatMessage>> {
+    val normalizedCode = roomCode.trim().uppercase()
+    val path = "rooms/$normalizedCode/chatMessages"
+    return db.collection("rooms").document(normalizedCode)
+      .collection("chatMessages")
+      .orderBy("createdAt", Query.Direction.ASCENDING)
+      .limit(limit)
+      .snapshots()
+      .map { snapshot ->
+        snapshot.toObjects(
+          RoomChatMessage::class.java,
+          DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+        )
+      }
+      .catch { error ->
+        if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
+        throw error
+      }
   }
 
   fun observeRoom(roomCode: String): Flow<LudoRoom?> {

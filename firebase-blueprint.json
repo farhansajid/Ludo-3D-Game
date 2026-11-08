@@ -194,6 +194,24 @@
         "toUid", "toName", "toCountry",
         "status", "memberUids", "createdAt", "updatedAt"
       ]
+    },
+    "RoomChatMessage": {
+      "title": "RoomChatMessage",
+      "description": "Real-time text chat message with profanity filtering and quick-reply emojis inside a private or multiplayer Ludo room.",
+      "type": "object",
+      "properties": {
+        "senderUid": { "type": "string", "description": "Firebase UID of the message author." },
+        "senderName": { "type": "string", "description": "Display name of the message author." },
+        "senderColor": { "type": "string", "description": "Player color or SPECTATOR badge of the author." },
+        "messageText": { "type": "string", "description": "Profanity-filtered text message content." },
+        "quickEmoji": { "type": "string", "description": "Optional quick-reply emoji attached to the message." },
+        "wasFiltered": { "type": "boolean", "description": "True if the profanity filter masked any words in the message." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when the chat message was sent." }
+      },
+      "required": [
+        "senderUid", "senderName", "senderColor",
+        "messageText", "quickEmoji", "wasFiltered", "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -203,11 +221,15 @@
     },
     "/rooms/{roomId}": {
       "schema": "LudoRoom",
-      "description": "Stores real-time multiplayer Ludo room state, dual-dice state, 2-8 player tokens, and voice call metadata."
+      "description": "Stores real-time multiplayer Ludo room state, dual-dice sequential selection state, 2-8 player tokens, and voice call metadata."
     },
     "/rooms/{roomId}/voiceSignals/{signalId}": {
       "schema": "VoiceSignal",
       "description": "Stores real-time WebRTC signaling and voice packets for 1-to-1 and group audio calls."
+    },
+    "/rooms/{roomId}/chatMessages/{messageId}": {
+      "schema": "RoomChatMessage",
+      "description": "Stores real-time profanity-filtered text chat messages and quick-reply emojis for rooms."
     },
     "/appConfig/{configId}": {
       "schema": "AdminAppConfig",

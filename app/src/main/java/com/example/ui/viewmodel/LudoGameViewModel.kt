@@ -29,10 +29,13 @@ import com.example.data.PawnMoveSpeed
 import com.example.data.PlayerColor
 import com.example.data.PlayerProfile
 import com.example.data.PlayerSeat
+import com.example.data.PrivateRoomChatCatalog
 import com.example.data.ProfileCatalog
 import com.example.data.ProfileMatchHistoryEntry
+import com.example.data.QuickReplyChatOption
 import com.example.data.ReplayCameraPreset
 import com.example.data.ReplayFrame
+import com.example.data.RoomChatMessage
 import com.example.data.RoomStatus
 import com.example.data.SampleReplayCatalog
 import com.example.data.StoreItem
@@ -46,10 +49,17 @@ import com.example.data.TutorialHighlightZoneType
 import com.example.data.TutorialInteractiveActionType
 import com.example.data.TutorialLessonStep
 import com.example.data.WeeklyTournamentCatalog
+import com.example.domain.InGameHudTelemetry
+import com.example.domain.InGamePlayerHudStats
 import com.example.domain.LudoRulesEngine
 import com.example.ui.audio.AudioCallManager
 import com.example.ui.audio.AudioCallUiState
+import com.example.ui.audio.DefaultHapticEffectRepository
 import com.example.ui.audio.DefaultSoundEffectRepository
+import com.example.ui.audio.HapticEffectRepository
+import com.example.ui.audio.HapticFeedbackManager
+import com.example.ui.audio.HapticPatternSpec
+import com.example.ui.audio.LudoHapticEvent
 import com.example.ui.audio.LudoSoundEvent
 import com.example.ui.audio.SoundEffectRepository
 import com.example.ui.audio.SoundEffectsManager
@@ -134,6 +144,10 @@ data class LudoUiState(
   val isSoundEnabled: Boolean = true,
   val soundVolume: Float = 1.0f,
   val lastPlayedSoundClipTitle: String = "",
+  val isHapticsEnabled: Boolean = true,
+  val lastTriggeredHapticTitle: String = "",
+  val activeHapticSpec: HapticPatternSpec? = null,
+  val hapticPulseSequence: Long = 0L,
   val activeParticleBurst: ParticleBurstEvent? = null,
   val turnSecondsRemaining: Int = TURN_DURATION_SECONDS,
   val statusBanner: String = "Roll 2 dice — any 6 deploys a pawn onto the board",
@@ -143,6 +157,13 @@ data class LudoUiState(
   val matchHomesByMe: Int = 0,
   val activeReactionEmoji: String = "",
   val activeReactionSender: String = "",
+  // Private Room Real-Time Text Chat & Dual-Dice Sequential Sync state
+  val roomChatMessages: List<RoomChatMessage> = PrivateRoomChatCatalog.buildInitialShowcaseMessages("PRV409"),
+  val chatDraftText: String = "",
+  val isRoomChatOpen: Boolean = false,
+  val unreadChatCount: Int = 0,
+  val lastProfanityFilterNotice: String? = null,
+  val lastSyncedDieChoiceSummary: String = "Step 1/2 • Select Die #1 or Die #2 to preview legal 3D pawn paths",
   // Daily Mission & Currency/XP state (combines session + Firestore profile)
   val sessionWinsCount: Int = 0,
   val sessionLossesCount: Int = 0,
@@ -230,7 +251,9 @@ data class LudoUiState(
   val tutorialCompletedStepIds: Set<String> = emptySet(),
   val tutorialGraduationRewardClaimed: Boolean = false,
   val tutorialCoachBanner: String = HowToPlayTutorialCatalog.LESSONS.first().coachInstruction,
-  // Modals & notifications
+  // Modals, HUD Overlay & notifications
+  val isHudOverlayVisible: Boolean = true,
+  val isHudOverlayExpanded: Boolean = false,
   val showRulesModal: Boolean = false,
   val isLoadingAction: Boolean = false,
   val errorMessage: String? = null,
@@ -244,6 +267,32 @@ data class LudoUiState(
 
   val activeDieValue: Int
     get() = if (selectedDieIndex == 0) diceValue else diceValue2
+
+  val sequentialMoveStepNumber: Int
+    get() = if (dice1Used xor dice2Used) 2 else 1
+
+  val sequentialMoveStepLabel: String
+    get() = when {
+      turnPhase != TurnPhase.MOVE -> "DUAL DICE • ROLL BOTH DICE TO BEGIN SEQUENTIAL MOVE"
+      sequentialMoveStepNumber == 1 -> "STEP 1 OF 2 • CHOOSE DIE #1 (+$diceValue) OR DIE #2 (+$diceValue2)"
+      else -> "STEP 2 OF 2 • MOVE WITH REMAINING DIE #${selectedDieIndex + 1} (+$activeDieValue)"
+    }
+
+  val hudTelemetry: InGameHudTelemetry
+    get() = LudoRulesEngine.computeHudTelemetry(
+      tokens = tokens,
+      seats = seats,
+      currentTurnColor = currentTurnColor,
+      turnPhase = turnPhase,
+      turnNumber = turnNumber,
+      diceValue = diceValue,
+      diceValue2 = diceValue2,
+      dice1Used = dice1Used,
+      dice2Used = dice2Used,
+      selectedDieIndex = selectedDieIndex,
+      legalMoveTokenIndices = legalMoveTokenIndices,
+      armCount = boardArmCount
+    )
 
   val previewEmote: PawnEmoteItem
     get() = EmoteGalleryCatalog.findById(selectedEmoteIdForPreview)
@@ -340,7 +389,8 @@ class LudoGameViewModel(
   val currentUserId: String?,
   initialDisplayName: String,
   val currentUserEmail: String? = null,
-  val soundEffectRepository: SoundEffectRepository = DefaultSoundEffectRepository()
+  val soundEffectRepository: SoundEffectRepository = DefaultSoundEffectRepository(),
+  val hapticEffectRepository: HapticEffectRepository = DefaultHapticEffectRepository()
 ) : ViewModel() {
 
   val isAuthenticated: Boolean
@@ -352,6 +402,7 @@ class LudoGameViewModel(
   private val _countryFilterFlow = MutableStateFlow(CountryCatalog.detectDefaultCountry().code)
 
   val soundManager = SoundEffectsManager(soundEffectRepository)
+  val hapticManager = HapticFeedbackManager(hapticEffectRepository)
 
   private val audioCallManager = AudioCallManager(
     repository = repository,
@@ -361,6 +412,7 @@ class LudoGameViewModel(
   val audioCallState: StateFlow<AudioCallUiState> = audioCallManager.callState
 
   private var roomListenerJob: Job? = null
+  private var chatListenerJob: Job? = null
   private var turnTimerJob: Job? = null
   private var botActionJob: Job? = null
   private var replayPlaybackJob: Job? = null
@@ -1203,6 +1255,8 @@ class LudoGameViewModel(
         matchHomesByMe = 0,
         activeMatchId = matchId,
         activeMatchRecordedFrames = listOf(kickoffFrame),
+        roomChatMessages = PrivateRoomChatCatalog.buildInitialShowcaseMessages(code),
+        unreadChatCount = 0,
         errorMessage = null,
         toastMessage = "Joined $roomKindLabel #$code as View-Only Observer!"
       )
@@ -1592,7 +1646,35 @@ class LudoGameViewModel(
     _uiState.update { it.copy(activeParticleBurst = null) }
   }
 
-  // --- SOUND EFFECTS & TOGGLE CONTROL ---
+  // --- SOUND EFFECTS & HAPTIC FEEDBACK CONTROLS ---
+
+  private fun emitHapticEvent(event: LudoHapticEvent): HapticPatternSpec? {
+    val spec = hapticManager.trigger(event)
+    if (spec != null) {
+      _uiState.update {
+        it.copy(
+          lastTriggeredHapticTitle = spec.title,
+          activeHapticSpec = spec,
+          hapticPulseSequence = it.hapticPulseSequence + 1L
+        )
+      }
+    }
+    return spec
+  }
+
+  fun toggleHapticsEnabled() {
+    val enabled = hapticManager.toggleHaptics()
+    val latestSpec = hapticManager.lastTriggeredPattern.value
+    _uiState.update {
+      it.copy(
+        isHapticsEnabled = enabled,
+        lastTriggeredHapticTitle = latestSpec?.title ?: it.lastTriggeredHapticTitle,
+        activeHapticSpec = if (enabled) latestSpec else null,
+        hapticPulseSequence = if (enabled) it.hapticPulseSequence + 1L else it.hapticPulseSequence,
+        statusBanner = if (enabled) "Tactile Haptic Feedback turned ON" else "Tactile Haptic Feedback turned OFF"
+      )
+    }
+  }
 
   fun toggleSoundEnabled() {
     val enabled = soundManager.toggleSound()
@@ -2349,6 +2431,23 @@ class LudoGameViewModel(
     }
   }
 
+  fun toggleHudOverlayVisibility(visible: Boolean? = null) {
+    _uiState.update { state ->
+      val nextVisible = visible ?: !state.isHudOverlayVisible
+      state.copy(isHudOverlayVisible = nextVisible)
+    }
+  }
+
+  fun toggleHudOverlayExpanded(expanded: Boolean? = null) {
+    _uiState.update { state ->
+      val nextExpanded = expanded ?: !state.isHudOverlayExpanded
+      state.copy(
+        isHudOverlayVisible = true,
+        isHudOverlayExpanded = nextExpanded
+      )
+    }
+  }
+
   private fun yawForColor(
     color: PlayerColor,
     seats: List<PlayerSeat>,
@@ -2678,6 +2777,7 @@ class LudoGameViewModel(
   private fun subscribeToOnlineRoom(roomCode: String) {
     if (!isAuthenticated) return
     roomListenerJob?.cancel()
+    chatListenerJob?.cancel()
     lastProcessedTurnKey = ""
     roomListenerJob = viewModelScope.launch {
       repository.observeRoom(roomCode)
@@ -2688,6 +2788,31 @@ class LudoGameViewModel(
         .collect { room ->
           if (room == null) return@collect
           applyRemoteRoomSnapshot(room)
+        }
+    }
+    chatListenerJob = viewModelScope.launch {
+      repository.observeRoomChatMessages(roomCode)
+        .catch { err ->
+          Log.w(TAG, "Room chat stream error", err)
+        }
+        .collect { cloudMessages ->
+          _uiState.update { state ->
+            val resolvedMessages = if (cloudMessages.isEmpty()) {
+              PrivateRoomChatCatalog.buildInitialShowcaseMessages(roomCode)
+            } else {
+              cloudMessages
+            }
+            val addedCount = (resolvedMessages.size - state.roomChatMessages.size).coerceAtLeast(0)
+            val nextUnread = if (state.isRoomChatOpen || state.currentScreen == AppScreen.WAITING_ROOM) {
+              0
+            } else {
+              state.unreadChatCount + addedCount
+            }
+            state.copy(
+              roomChatMessages = resolvedMessages,
+              unreadChatCount = nextUnread
+            )
+          }
         }
     }
   }
@@ -2765,6 +2890,7 @@ class LudoGameViewModel(
         roomCallMode = AudioCallMode.fromString(room.callMode),
         roomCallInitiatorUid = room.callInitiatorUid,
         roomCallTargetUid = room.callTargetUid,
+        lastSyncedDieChoiceSummary = "Firestore Synced • Die #${selIdx + 1} (+$activeDie) selected",
         cameraYaw = nextYaw
       )
     }
@@ -2856,7 +2982,7 @@ class LudoGameViewModel(
     val state = _uiState.value
     if (state.isSpectating) {
       _uiState.update {
-        it.copy(statusBanner = "👁️ Spectator Mode (View-Only) — Use the Emoji & 3D Emote bar below to cheer!")
+        it.copy(statusBanner = "👁️ Spectator Mode (View-Only) — Use the Emoji, Chat & 3D Emote bar to cheer!")
       }
       return
     }
@@ -2874,16 +3000,35 @@ class LudoGameViewModel(
       seats = state.seats,
       armCount = state.boardArmCount
     )
+    val stepNum = if (state.dice1Used xor state.dice2Used) 2 else 1
+    val actorName = state.seats.firstOrNull { it.color == state.currentTurnColor }?.name ?: state.currentTurnColor.label
+    val bannerMsg = if (legal.isNotEmpty()) {
+      "Step $stepNum/2: $actorName selected Die #${idx + 1} (+$dieVal) — tap a glowing 3D pawn"
+    } else {
+      "Step $stepNum/2: Die #${idx + 1} (+$dieVal) has no legal moves — switch to the other die"
+    }
+    val syncSummary = if (isAuthenticated && state.isOnlineMatch && state.roomCode.isNotBlank()) {
+      "Step $stepNum/2 • Die #${idx + 1} (+$dieVal) synced to Firestore #${state.roomCode}"
+    } else {
+      "Step $stepNum/2 • Die #${idx + 1} (+$dieVal) selected (${legal.size} legal pawns)"
+    }
+    emitHapticEvent(LudoHapticEvent.DIE_SELECT)
     _uiState.update {
       it.copy(
         selectedDieIndex = idx,
         legalMoveTokenIndices = legal,
-        statusBanner = if (legal.isNotEmpty()) {
-          "Die ${idx + 1} (+$dieVal) selected — tap a glowing 3D pawn"
-        } else {
-          "Die ${idx + 1} (+$dieVal) has no valid moves — select the other die"
-        }
+        statusBanner = bannerMsg,
+        lastSyncedDieChoiceSummary = syncSummary
       )
+    }
+    if (isAuthenticated && state.isOnlineMatch && !state.isSpectating && state.roomCode.isNotBlank()) {
+      viewModelScope.launch {
+        repository.syncSelectedDieChoice(
+          roomCode = state.roomCode,
+          selectedDieIndex = idx,
+          lastEvent = bannerMsg
+        )
+      }
     }
   }
 
@@ -2893,6 +3038,11 @@ class LudoGameViewModel(
 
     val state = _uiState.value
     if (state.roomStatus != RoomStatus.PLAYING || state.turnPhase == TurnPhase.GAME_OVER) return
+
+    // Trigger haptic feedback when a player's turn begins (TurnPhase.ROLL)
+    if (state.turnPhase == TurnPhase.ROLL) {
+      emitHapticEvent(LudoHapticEvent.TURN_START)
+    }
 
     val configuredTurnDuration = adminConfigState.value.turnDurationSeconds.toInt().coerceIn(8, 120)
 
@@ -2919,25 +3069,10 @@ class LudoGameViewModel(
         delay(420L)
         onRollDiceClicked(triggeredByBotOrTimer = true)
       }
-    } else if (state.turnPhase == TurnPhase.MOVE && isCurrentTurnControlledLocally()) {
-      if (shouldRunBot) {
-        botActionJob = viewModelScope.launch {
-          delay(320L)
-          executeBotOrTimerBestDualMove()
-        }
-      } else {
-        // Smart Auto-Move for Human when only 1 die remains (or both dice are identical) and only 1 token can move
-        val onlyOneDieLeft = state.dice1Used xor state.dice2Used
-        val identicalDice = state.diceValue == state.diceValue2
-        if ((onlyOneDieLeft || identicalDice) && state.legalMoveTokenIndices.size == 1) {
-          botActionJob = viewModelScope.launch {
-            delay(280L)
-            val singleToken = _uiState.value.legalMoveTokenIndices.firstOrNull()
-            if (singleToken != null) {
-              onTokenSelected(singleToken, triggeredByBotOrAuto = true)
-            }
-          }
-        }
+    } else if (state.turnPhase == TurnPhase.MOVE && isCurrentTurnControlledLocally() && shouldRunBot) {
+      botActionJob = viewModelScope.launch {
+        delay(320L)
+        executeBotOrTimerBestDualMove()
       }
     }
   }
@@ -2984,6 +3119,7 @@ class LudoGameViewModel(
     if (!triggeredByBotOrTimer && !canCurrentUserAct()) return
 
     val rollClip = soundManager.playDiceRoll()
+    emitHapticEvent(LudoHapticEvent.DICE_ROLL)
     _uiState.update {
       it.copy(lastPlayedSoundClipTitle = rollClip?.title ?: it.lastPlayedSoundClipTitle)
     }
@@ -3120,7 +3256,7 @@ class LudoGameViewModel(
         val initialLegal = if (initialSelectedIdx == 0) legal1 else legal2
         val activeDieVal = if (initialSelectedIdx == 0) die1 else die2
 
-        val movePrompt = "$activeSeatName rolled [$die1, $die2] — select Die 1 or Die 2 to move (+$activeDieVal active)"
+        val movePrompt = "Step 1/2: $activeSeatName rolled [$die1, $die2] — choose Die #1 or Die #2 (+$activeDieVal active)"
         _uiState.update {
           it.copy(
             diceValue = die1,
@@ -3134,7 +3270,8 @@ class LudoGameViewModel(
             turnPhase = TurnPhase.MOVE,
             legalMoveTokenIndices = initialLegal,
             activeParticleBurst = doubleSixBurst ?: it.activeParticleBurst,
-            statusBanner = movePrompt
+            statusBanner = movePrompt,
+            lastSyncedDieChoiceSummary = "Step 1/2 • Die #${initialSelectedIdx + 1} (+$activeDieVal) active"
           )
         }
         syncStateIfOnline()
@@ -3253,21 +3390,29 @@ class LudoGameViewModel(
 
       val outcomeClip = when {
         outcome.nextTurnPhase == TurnPhase.GAME_OVER -> {
+          emitHapticEvent(LudoHapticEvent.HOME_OR_VICTORY)
           soundManager.playGameCelebration()
         }
         outcome.reachedHome -> {
+          emitHapticEvent(LudoHapticEvent.HOME_OR_VICTORY)
           soundManager.play(LudoSoundEvent.HOME)
         }
         outcome.capturedTokenIndices.isNotEmpty() -> {
+          emitHapticEvent(LudoHapticEvent.PAWN_CAPTURE)
           soundManager.play(LudoSoundEvent.CAPTURE)
         }
         openedFromYard -> {
+          emitHapticEvent(LudoHapticEvent.PAWN_MOVE)
           soundManager.play(LudoSoundEvent.OPEN)
         }
         landedOnSafe || outcome.formedBlockade -> {
+          emitHapticEvent(LudoHapticEvent.PAWN_MOVE)
           soundManager.play(LudoSoundEvent.SAFE)
         }
-        else -> null
+        else -> {
+          emitHapticEvent(LudoHapticEvent.PAWN_MOVE)
+          null
+        }
       }
       if (outcomeClip != null) {
         _uiState.update {
@@ -3417,7 +3562,8 @@ class LudoGameViewModel(
             legalMoveTokenIndices = otherLegalMoves,
             animatedToken = null,
             activeParticleBurst = particleEvent ?: it.activeParticleBurst,
-            statusBanner = "$seatName played +$usedDieValue • Now move +$otherDieValue with Die ${otherDieIndex + 1}",
+            statusBanner = "Step 2/2: $seatName played +$usedDieValue • Now move +$otherDieValue with Die #${otherDieIndex + 1}",
+            lastSyncedDieChoiceSummary = "Step 2/2 • Remaining Die #${otherDieIndex + 1} (+$otherDieValue) active",
             winnerColor = outcome.winnerColor,
             winnerOrder = outcome.updatedWinnerOrder,
             matchCapturesByMe = it.matchCapturesByMe + myCapturesDelta,
@@ -3618,6 +3764,101 @@ class LudoGameViewModel(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Private Room Real-Time Text Chat (with Profanity Filter & Quick-Reply Emojis)
+  // ---------------------------------------------------------------------------
+
+  fun toggleRoomChat(open: Boolean? = null) {
+    _uiState.update { state ->
+      val nextOpen = open ?: !state.isRoomChatOpen
+      state.copy(
+        isRoomChatOpen = nextOpen,
+        unreadChatCount = if (nextOpen) 0 else state.unreadChatCount,
+        lastProfanityFilterNotice = if (!nextOpen) null else state.lastProfanityFilterNotice
+      )
+    }
+  }
+
+  fun updateChatDraftText(text: String) {
+    _uiState.update { it.copy(chatDraftText = text.take(160)) }
+  }
+
+  fun clearProfanityNotice() {
+    _uiState.update { it.copy(lastProfanityFilterNotice = null) }
+  }
+
+  fun sendQuickReplyChat(option: QuickReplyChatOption) {
+    sendRoomChatMessage(
+      rawInput = "${option.emoji} ${option.phrase}",
+      quickEmoji = option.emoji
+    )
+    sendQuickEmojiReaction(option.emoji)
+  }
+
+  fun sendRoomChatMessage(
+    rawInput: String = _uiState.value.chatDraftText,
+    quickEmoji: String = ""
+  ) {
+    val state = _uiState.value
+    val trimmed = rawInput.trim()
+    if (trimmed.isBlank() && quickEmoji.isBlank()) return
+
+    val sanitizeResult = PrivateRoomChatCatalog.sanitizeMessage(
+      if (trimmed.isNotBlank()) trimmed else quickEmoji
+    )
+    if (sanitizeResult.cleanedText.isBlank()) return
+
+    val mySeat = state.seats.firstOrNull { !it.isBot && (it.uid == currentUserId || !state.isOnlineMatch) }
+    val senderColorName = when {
+      state.isSpectating -> "SPECTATOR"
+      mySeat != null -> mySeat.color.name
+      else -> state.preferredOnlineColor.name
+    }
+    val senderDisplay = if (state.isSpectating) {
+      "${currentDisplayName()} (Spectator)"
+    } else {
+      currentDisplayName()
+    }
+    val effectiveRoomCode = state.roomCode.ifBlank { "PRV409" }
+    val localMsg = RoomChatMessage(
+      id = "msg_${System.currentTimeMillis()}",
+      roomCode = effectiveRoomCode,
+      senderUid = currentUserId ?: "LOCAL_PLAYER",
+      senderName = senderDisplay,
+      senderColor = senderColorName,
+      messageText = sanitizeResult.cleanedText,
+      quickEmoji = quickEmoji.take(16),
+      wasFiltered = sanitizeResult.wasFiltered
+    )
+
+    val filterWarning = if (sanitizeResult.wasFiltered) {
+      "🛡️ Profanity Filter Active: Replaced ${sanitizeResult.filteredWordCount} restricted word(s) with ***"
+    } else {
+      null
+    }
+
+    soundManager.play(LudoSoundEvent.MOVE)
+    _uiState.update { current ->
+      current.copy(
+        roomChatMessages = (current.roomChatMessages + localMsg).takeLast(50),
+        chatDraftText = if (quickEmoji.isBlank()) "" else current.chatDraftText,
+        lastProfanityFilterNotice = filterWarning ?: current.lastProfanityFilterNotice
+      )
+    }
+
+    if (isAuthenticated && state.isOnlineMatch && state.roomCode.isNotBlank()) {
+      viewModelScope.launch {
+        repository.sendRoomChatMessage(
+          roomCode = state.roomCode,
+          senderName = senderDisplay,
+          senderColor = senderColorName,
+          rawMessageText = trimmed.ifBlank { quickEmoji },
+          quickEmoji = quickEmoji
+        )
+      }
+    }
+  }
+
   fun leaveToLobby() {
     val state = _uiState.value
     // If leaving an active match after turns have progressed (and not spectating), record forfeit rank penalty
@@ -3670,6 +3911,7 @@ class LudoGameViewModel(
     }
 
     roomListenerJob?.cancel()
+    chatListenerJob?.cancel()
     turnTimerJob?.cancel()
     botActionJob?.cancel()
     replayPlaybackJob?.cancel()
@@ -3682,6 +3924,8 @@ class LudoGameViewModel(
         spectatingTargetName = "",
         isTournamentMatchActive = false,
         roomCode = "",
+        isRoomChatOpen = false,
+        unreadChatCount = 0,
         isReplayPlaying = false,
         legalMoveTokenIndices = emptyList(),
         animatedToken = null,
@@ -3987,6 +4231,7 @@ class LudoGameViewModel(
   override fun onCleared() {
     super.onCleared()
     roomListenerJob?.cancel()
+    chatListenerJob?.cancel()
     turnTimerJob?.cancel()
     botActionJob?.cancel()
     replayPlaybackJob?.cancel()

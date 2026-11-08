@@ -626,4 +626,240 @@ class ExampleUnitTest {
     assertEquals(14, ongoingPrivateRoom.tokenPositions[4])
     assertEquals(2, ongoingPrivateRoom.seats.size)
   }
+
+  @Test
+  fun privateRoomChat_filtersProfanityAndSupportsQuickReplyEmojis() {
+    // 1. Verify Quick-Reply Emojis & Phrases catalog is populated
+    val quickReplies = com.example.data.PrivateRoomChatCatalog.QUICK_REPLY_OPTIONS
+    assertTrue(quickReplies.size >= 6)
+    assertTrue(quickReplies.any { it.emoji == "🎲" && it.phrase.contains("Roll", ignoreCase = true) })
+
+    // 2. Verify clean text passes through unmodified with wasFiltered = false
+    val cleanResult = com.example.data.PrivateRoomChatCatalog.sanitizeMessage("Great blockade move on the star square!")
+    assertFalse(cleanResult.wasFiltered)
+    assertEquals(0, cleanResult.filteredWordCount)
+    assertEquals("Great blockade move on the star square!", cleanResult.cleanedText)
+
+    // 3. Verify profanity is masked with asterisks and marked wasFiltered = true
+    val profaneResult = com.example.data.PrivateRoomChatCatalog.sanitizeMessage("What a crap roll, that was bullshit!")
+    assertTrue(profaneResult.wasFiltered)
+    assertEquals(2, profaneResult.filteredWordCount)
+    assertFalse(profaneResult.cleanedText.contains("crap", ignoreCase = true))
+    assertFalse(profaneResult.cleanedText.contains("bullshit", ignoreCase = true))
+    assertTrue(profaneResult.cleanedText.contains("****"))
+
+    // 4. Verify initial showcase messages for private room
+    val showcase = com.example.data.PrivateRoomChatCatalog.buildInitialShowcaseMessages("PRV409")
+    assertEquals(3, showcase.size)
+    assertEquals("PRV409", showcase.first().roomCode)
+  }
+
+  @Test
+  fun dualDiceSequentialSelection_switchesActiveDieRecomputesLegalMovesAndSyncsViaFirestore() {
+    // Setup a board where RED has token 0 on step 4 (active on track) and tokens 1..3 in Yard (-1)
+    val tokens = MutableList(32) { -1 }.apply {
+      this[0] = 4
+    }
+    val seats = listOf(
+      com.example.data.PlayerSeat(com.example.data.PlayerColor.RED, "u_red", "Alice", isBot = false),
+      com.example.data.PlayerSeat(com.example.data.PlayerColor.GREEN, "u_green", "Bob", isBot = false)
+    )
+
+    // Roll is Die 1 = 3, Die 2 = 6:
+    // - When Die #1 (+3) is selected (selectedDieIndex = 0), only token 0 (on track) can move
+    // - When Die #2 (+6) is selected (selectedDieIndex = 1), token 0 AND yard tokens 1, 2, 3 can move!
+    val legalForDie1 = LudoRulesEngine.getLegalMoveTokenIndices(
+      tokens = tokens,
+      color = com.example.data.PlayerColor.RED,
+      diceValue = 3,
+      seats = seats,
+      armCount = 4
+    )
+    val legalForDie2 = LudoRulesEngine.getLegalMoveTokenIndices(
+      tokens = tokens,
+      color = com.example.data.PlayerColor.RED,
+      diceValue = 6,
+      seats = seats,
+      armCount = 4
+    )
+    assertEquals(listOf(0), legalForDie1)
+    assertEquals(listOf(0, 1, 2, 3), legalForDie2)
+
+    // Verify LudoUiState sequential step numbering and activeDieValue when switching between Die 1 and Die 2
+    val step1WithDie1 = com.example.ui.viewmodel.LudoUiState(
+      turnPhase = com.example.data.TurnPhase.MOVE,
+      diceValue = 3,
+      diceValue2 = 6,
+      dice1Used = false,
+      dice2Used = false,
+      selectedDieIndex = 0
+    )
+    assertEquals(1, step1WithDie1.sequentialMoveStepNumber)
+    assertEquals(3, step1WithDie1.activeDieValue)
+    assertTrue(step1WithDie1.sequentialMoveStepLabel.contains("STEP 1 OF 2"))
+
+    val step1WithDie2 = step1WithDie1.copy(selectedDieIndex = 1)
+    assertEquals(1, step1WithDie2.sequentialMoveStepNumber)
+    assertEquals(6, step1WithDie2.activeDieValue)
+
+    // After using Die #2 (+6) to deploy token 1 from yard, verify sequential transition to Step 2 of 2 with Die #1 (+3)
+    val moveOutcome = LudoRulesEngine.executeMove(
+      tokens = tokens,
+      seats = seats,
+      currentTurnColor = com.example.data.PlayerColor.RED,
+      tokenIndex = 1,
+      diceValue = 6,
+      consecutiveSixes = 1,
+      currentWinnerColor = "NONE",
+      currentWinnerOrder = emptyList(),
+      armCount = 4
+    )
+    assertEquals(0, moveOutcome.updatedTokens[1]) // Deployed onto start square
+
+    val step2RemainingDie1 = step1WithDie2.copy(
+      tokens = moveOutcome.updatedTokens,
+      dice1Used = false,
+      dice2Used = true,
+      selectedDieIndex = 0
+    )
+    assertEquals(2, step2RemainingDie1.sequentialMoveStepNumber)
+    assertEquals(3, step2RemainingDie1.activeDieValue)
+    assertTrue(step2RemainingDie1.sequentialMoveStepLabel.contains("STEP 2 OF 2"))
+
+    // Verify Firestore LudoRoom snapshot carries selectedDieIndex, dice1Used, and dice2Used for real-time sync
+    val syncedRoom = com.example.data.LudoRoom(
+      id = "PRV409",
+      roomCode = "PRV409",
+      status = com.example.data.RoomStatus.PLAYING.name,
+      currentTurnColor = "RED",
+      turnPhase = com.example.data.TurnPhase.MOVE.name,
+      diceValue = 3L,
+      diceValue2 = 6L,
+      dice1Used = false,
+      dice2Used = true,
+      selectedDieIndex = 0L
+    )
+    assertEquals(0L, syncedRoom.selectedDieIndex)
+    assertFalse(syncedRoom.dice1Used)
+    assertTrue(syncedRoom.dice2Used)
+  }
+
+  @Test
+  fun inGameHudTelemetry_computesActivePawnsRemainingMovesAndCurrentTurnIndicator() {
+    // RED has:
+    // - token 0 at Home Goal (56) -> 0 tiles remaining
+    // - token 1 in Home Stretch (52) -> 4 tiles remaining
+    // - token 2 on outer track (16) -> 40 tiles remaining
+    // - token 3 in Yard (-1) -> 57 tiles remaining
+    // Total remaining tiles = 0 + 4 + 40 + 57 = 101 tiles
+    val tokens = MutableList(32) { -1 }.apply {
+      this[0] = LudoRulesEngine.HOME_GOAL_POS // 56
+      this[1] = 52
+      this[2] = 16
+      this[3] = -1
+      // GREEN has 1 active pawn on square 10
+      this[4] = 10
+    }
+    val seats = listOf(
+      com.example.data.PlayerSeat(com.example.data.PlayerColor.RED, "u_red", "Empress Zara", isBot = false),
+      com.example.data.PlayerSeat(com.example.data.PlayerColor.GREEN, "u_green", "Atelier Bot", isBot = true)
+    )
+
+    val uiState = com.example.ui.viewmodel.LudoUiState(
+      seats = seats,
+      tokens = tokens,
+      currentTurnColor = com.example.data.PlayerColor.RED,
+      turnPhase = com.example.data.TurnPhase.MOVE,
+      turnNumber = 12,
+      diceValue = 4,
+      diceValue2 = 6,
+      dice1Used = false,
+      dice2Used = false,
+      selectedDieIndex = 1,
+      legalMoveTokenIndices = listOf(2, 3)
+    )
+
+    val hud = uiState.hudTelemetry
+    assertEquals(com.example.data.PlayerColor.RED, hud.currentTurnColor)
+    assertEquals("Empress Zara", hud.currentTurnPlayerName)
+    assertEquals(12, hud.turnNumber)
+    assertEquals("MOVE 1/2", hud.turnPhaseBadge)
+    assertEquals(2, hud.remainingDiceMovesInTurn)
+    assertEquals(10, hud.remainingDicePipsInTurn)
+    assertEquals(2, hud.legalMovablePawnCount)
+    assertEquals("Die #2 (+6)", hud.activeDieLabel)
+
+    val redStats = hud.activePlayerStats
+    assertEquals(2, redStats.activePawnsOnBoard) // token 1 (52) and token 2 (16)
+    assertEquals(1, redStats.pawnsInHomeStretch) // token 1 (52)
+    assertEquals(1, redStats.pawnsAtHomeGoal)    // token 0 (56)
+    assertEquals(1, redStats.pawnsInYard)        // token 3 (-1)
+    assertEquals(101, redStats.totalRemainingTilesToVictory)
+    assertTrue(redStats.raceProgressPercent in 50..60)
+
+    // After Die #2 is used, verify remainingDiceMovesInTurn drops to 1 and turnPhaseBadge is MOVE 2/2
+    val afterFirstDieUiState = uiState.copy(
+      dice2Used = true,
+      selectedDieIndex = 0,
+      legalMoveTokenIndices = listOf(1, 2)
+    )
+    val hudStep2 = afterFirstDieUiState.hudTelemetry
+    assertEquals("MOVE 2/2", hudStep2.turnPhaseBadge)
+    assertEquals(1, hudStep2.remainingDiceMovesInTurn)
+    assertEquals(4, hudStep2.remainingDicePipsInTurn)
+    assertEquals("Die #1 (+4)", hudStep2.activeDieLabel)
+  }
+
+  @Test
+  fun hapticFeedbackManager_triggersPatternsForTurnBeginDiceRollAndPawnCapture() {
+    val repository = com.example.ui.audio.DefaultHapticEffectRepository()
+    val manager = com.example.ui.audio.HapticFeedbackManager(repository)
+
+    // Verify all 6 haptic patterns exist and have matching timings and amplitude arrays
+    val allPatterns = repository.getAllPatterns()
+    assertEquals(6, allPatterns.size)
+    allPatterns.forEach { spec ->
+      assertTrue(spec.totalDurationMs > 0L)
+      assertEquals(spec.timingsMs.size, spec.amplitudes.size)
+    }
+
+    // 1. Turn Begin haptic feedback
+    val turnBeginSpec = manager.triggerTurnBegin()
+    assertNotNull(turnBeginSpec)
+    assertEquals(com.example.ui.audio.LudoHapticEvent.TURN_START, turnBeginSpec?.event)
+    assertEquals(turnBeginSpec, manager.lastTriggeredPattern.value)
+
+    // 2. Rolling the dice haptic feedback
+    val diceRollSpec = manager.triggerDiceRoll()
+    assertNotNull(diceRollSpec)
+    assertEquals(com.example.ui.audio.LudoHapticEvent.DICE_ROLL, diceRollSpec?.event)
+    assertEquals(diceRollSpec, manager.lastTriggeredPattern.value)
+
+    // 3. Capturing an opponent's pawn haptic feedback
+    val captureSpec = manager.triggerPawnCapture()
+    assertNotNull(captureSpec)
+    assertEquals(com.example.ui.audio.LudoHapticEvent.PAWN_CAPTURE, captureSpec?.event)
+    assertEquals(captureSpec, manager.lastTriggeredPattern.value)
+    assertTrue(captureSpec!!.totalDurationMs > turnBeginSpec!!.totalDurationMs)
+
+    assertEquals(
+      listOf(
+        com.example.ui.audio.LudoHapticEvent.TURN_START,
+        com.example.ui.audio.LudoHapticEvent.DICE_ROLL,
+        com.example.ui.audio.LudoHapticEvent.PAWN_CAPTURE
+      ),
+      manager.triggeredEventsHistory.value
+    )
+
+    // Toggle off and verify no haptic is emitted while disabled
+    val enabledAfterOff = manager.toggleHaptics()
+    assertFalse(enabledAfterOff)
+    assertEquals(null, manager.triggerDiceRoll())
+    assertEquals(3, manager.triggeredEventsHistory.value.size)
+
+    // Toggle back on
+    val enabledAfterOn = manager.toggleHaptics()
+    assertTrue(enabledAfterOn)
+    assertEquals(com.example.ui.audio.LudoHapticEvent.TURN_START, manager.lastTriggeredPattern.value?.event)
+  }
 }

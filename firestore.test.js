@@ -326,3 +326,70 @@ test("Friend requests lifecycle: Alice sends to Bob, Bob accepts, memberUids que
   await assertSucceeds(aliceDb.collection("friendRequests").doc(reqId).delete());
 });
 
+test("Private room chat & dual-dice sequential selection sync: members and observers can chat with profanity filter, and active player syncs selectedDieIndex", async () => {
+  const now = new Date();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const privRefAlice = aliceDb.collection("rooms").doc("PRV409");
+  await assertSucceeds(
+    privRefAlice.set({
+      ...createValidRoomPayload(ALICE_UID, "PLAYING", false, 4),
+      roomCode: "PRV409",
+      turnPhase: "MOVE",
+      diceValue: 6,
+      diceValue2: 4,
+      selectedDieIndex: 0,
+    })
+  );
+
+  // Alice switches her sequential die selection to Die 2 (selectedDieIndex = 1) and syncs via Firestore
+  await assertSucceeds(
+    privRefAlice.update({
+      selectedDieIndex: 1,
+      lastEvent: "Alice selected Die #2 (+4) for sequential move",
+      updatedAt: new Date(),
+    })
+  );
+
+  // Alice sends a private room chat message with a quick-reply emoji
+  await assertSucceeds(
+    privRefAlice.collection("chatMessages").doc("msg_1").set({
+      senderUid: ALICE_UID,
+      senderName: "Alice",
+      senderColor: "RED",
+      messageText: "Good roll! Let's use Die #2 first.",
+      quickEmoji: "🎲",
+      wasFiltered: false,
+      createdAt: now,
+    })
+  );
+
+  // Raw profanity is rejected by Firestore security rules if client filter is bypassed
+  await assertFails(
+    privRefAlice.collection("chatMessages").doc("msg_bad").set({
+      senderUid: ALICE_UID,
+      senderName: "Alice",
+      senderColor: "RED",
+      messageText: "what the fuck",
+      quickEmoji: "",
+      wasFiltered: false,
+      createdAt: now,
+    })
+  );
+
+  // Masked profanity (client-sanitized with ***) succeeds
+  await assertSucceeds(
+    bobDb.collection("rooms").doc("PRV409").collection("chatMessages").doc("msg_2").set({
+      senderUid: BOB_UID,
+      senderName: "Bob",
+      senderColor: "SPECTATOR",
+      messageText: "what the ****! Close call!",
+      quickEmoji: "😅",
+      wasFiltered: true,
+      createdAt: now,
+    })
+  );
+});
+
+

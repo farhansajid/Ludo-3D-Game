@@ -492,4 +492,159 @@ object LudoRulesEngine {
     score += targetPos.coerceAtLeast(0)
     return score
   }
+
+  fun computePlayerHudStats(
+    tokens: List<Int>,
+    seat: PlayerSeat,
+    currentTurnColor: PlayerColor,
+    armCount: Int = 4
+  ): InGamePlayerHudStats {
+    val goalPos = homeGoalPos(armCount)
+    val maxMainRel = maxMainTrackRel(armCount)
+    val maxTilesPerPawn = goalPos + 1 // 1 step to exit yard onto 0 + goalPos steps to Home
+    val totalPossibleTiles = maxTilesPerPawn * 4
+
+    val tokenIndices = tokenIndicesForColor(seat.color)
+    var inYard = 0
+    var activeOnBoard = 0
+    var inHomeStretch = 0
+    var atHomeGoal = 0
+    var remainingTiles = 0
+
+    for (idx in tokenIndices) {
+      val pos = tokens.getOrElse(idx) { YARD_POS }
+      when {
+        pos == YARD_POS -> {
+          inYard += 1
+          remainingTiles += maxTilesPerPawn
+        }
+        pos >= goalPos -> {
+          atHomeGoal += 1
+        }
+        pos > maxMainRel -> {
+          activeOnBoard += 1
+          inHomeStretch += 1
+          remainingTiles += (goalPos - pos).coerceAtLeast(0)
+        }
+        else -> {
+          activeOnBoard += 1
+          remainingTiles += (goalPos - pos).coerceAtLeast(0)
+        }
+      }
+    }
+
+    val completedTiles = (totalPossibleTiles - remainingTiles).coerceIn(0, totalPossibleTiles)
+    val progressPct = if (totalPossibleTiles > 0) {
+      ((completedTiles * 100f) / totalPossibleTiles.toFloat()).toInt().coerceIn(0, 100)
+    } else {
+      0
+    }
+
+    return InGamePlayerHudStats(
+      color = seat.color,
+      playerName = seat.name,
+      isBot = seat.isBot,
+      isCurrentTurn = seat.color == currentTurnColor,
+      pawnsInYard = inYard,
+      activePawnsOnBoard = activeOnBoard,
+      pawnsInHomeStretch = inHomeStretch,
+      pawnsAtHomeGoal = atHomeGoal,
+      totalRemainingTilesToVictory = remainingTiles,
+      raceProgressPercent = progressPct
+    )
+  }
+
+  fun computeHudTelemetry(
+    tokens: List<Int>,
+    seats: List<PlayerSeat>,
+    currentTurnColor: PlayerColor,
+    turnPhase: TurnPhase,
+    turnNumber: Int,
+    diceValue: Int,
+    diceValue2: Int,
+    dice1Used: Boolean,
+    dice2Used: Boolean,
+    selectedDieIndex: Int,
+    legalMoveTokenIndices: List<Int>,
+    armCount: Int = 4
+  ): InGameHudTelemetry {
+    val resolvedSeats = seats.ifEmpty {
+      listOf(PlayerSeat(currentTurnColor, "HUMAN_0", currentTurnColor.label, isBot = false))
+    }
+    val allStats = resolvedSeats.map { seat ->
+      computePlayerHudStats(
+        tokens = tokens,
+        seat = seat,
+        currentTurnColor = currentTurnColor,
+        armCount = armCount
+      )
+    }
+    val activeStats = allStats.firstOrNull { it.color == currentTurnColor } ?: allStats.first()
+
+    val remainingDiceMoves = when (turnPhase) {
+      TurnPhase.ROLL -> 2
+      TurnPhase.MOVE -> (if (!dice1Used) 1 else 0) + (if (!dice2Used) 1 else 0)
+      TurnPhase.GAME_OVER -> 0
+    }
+
+    val remainingDicePips = when (turnPhase) {
+      TurnPhase.MOVE -> (if (!dice1Used) diceValue else 0) + (if (!dice2Used) diceValue2 else 0)
+      else -> 0
+    }
+
+    val phaseBadge = when (turnPhase) {
+      TurnPhase.ROLL -> "ROLL 2 DICE"
+      TurnPhase.MOVE -> if (remainingDiceMoves >= 2) "MOVE 1/2" else "MOVE 2/2"
+      TurnPhase.GAME_OVER -> "MATCH FINISHED"
+    }
+
+    val activeDieVal = if (selectedDieIndex == 0) diceValue else diceValue2
+    val activeDieLabel = when (turnPhase) {
+      TurnPhase.ROLL -> "Awaiting Dual-Dice Roll"
+      TurnPhase.MOVE -> "Die #${selectedDieIndex + 1} (+$activeDieVal)"
+      TurnPhase.GAME_OVER -> "Victory Complete"
+    }
+
+    return InGameHudTelemetry(
+      currentTurnColor = currentTurnColor,
+      currentTurnPlayerName = activeStats.playerName,
+      turnNumber = turnNumber,
+      turnPhase = turnPhase,
+      turnPhaseBadge = phaseBadge,
+      activePlayerStats = activeStats,
+      allPlayerStats = allStats,
+      remainingDiceMovesInTurn = remainingDiceMoves,
+      remainingDicePipsInTurn = remainingDicePips,
+      legalMovablePawnCount = legalMoveTokenIndices.size,
+      activeDieLabel = activeDieLabel
+    )
+  }
 }
+
+data class InGamePlayerHudStats(
+  val color: PlayerColor,
+  val playerName: String,
+  val isBot: Boolean,
+  val isCurrentTurn: Boolean,
+  val pawnsInYard: Int,
+  val activePawnsOnBoard: Int,
+  val pawnsInHomeStretch: Int,
+  val pawnsAtHomeGoal: Int,
+  val totalRemainingTilesToVictory: Int,
+  val raceProgressPercent: Int
+)
+
+data class InGameHudTelemetry(
+  val currentTurnColor: PlayerColor,
+  val currentTurnPlayerName: String,
+  val turnNumber: Int,
+  val turnPhase: TurnPhase,
+  val turnPhaseBadge: String,
+  val activePlayerStats: InGamePlayerHudStats,
+  val allPlayerStats: List<InGamePlayerHudStats>,
+  val remainingDiceMovesInTurn: Int,
+  val remainingDicePipsInTurn: Int,
+  val legalMovablePawnCount: Int,
+  val activeDieLabel: String
+)
+

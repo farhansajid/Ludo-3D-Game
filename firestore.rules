@@ -130,6 +130,25 @@ service cloud.firestore {
              data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
+    function isValidRoomChatMessage(data) {
+      return data.keys().hasAll([
+               'senderUid', 'senderName', 'senderColor',
+               'messageText', 'quickEmoji', 'wasFiltered', 'createdAt'
+             ]) &&
+             data.keys().hasOnly([
+               'senderUid', 'senderName', 'senderColor',
+               'messageText', 'quickEmoji', 'wasFiltered', 'createdAt'
+             ]) &&
+             data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 60 &&
+             data.senderColor is string && data.senderColor in ['RED', 'GREEN', 'YELLOW', 'BLUE', 'PURPLE', 'ORANGE', 'TEAL', 'ROSE', 'SPECTATOR'] &&
+             data.messageText is string && data.messageText.size() >= 1 && data.messageText.size() <= 240 &&
+             !data.messageText.lower().matches('.*(fuck|shit|bitch|asshole|bastard).*') &&
+             data.quickEmoji is string && data.quickEmoji.size() <= 16 &&
+             data.wasFiltered is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     function isValidAdminConfig(data) {
       return data.keys().hasAll([
                'updatedByUid', 'ownerEmail', 'customFirebaseDatabaseId',
@@ -241,6 +260,27 @@ service cloud.firestore {
                          isValidId(roomId) &&
                          isValidId(signalId) &&
                          request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.memberUids;
+      }
+
+      match /chatMessages/{messageId} {
+        allow get, list: if isSignedIn() &&
+                            isValidId(roomId) &&
+                            (request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.memberUids ||
+                             get(/databases/$(database)/documents/rooms/$(roomId)).data.status in ['WAITING', 'PLAYING', 'FINISHED']);
+
+        allow create: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(messageId) &&
+                         (request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.memberUids ||
+                          get(/databases/$(database)/documents/rooms/$(roomId)).data.status in ['WAITING', 'PLAYING']) &&
+                         incoming().senderUid == request.auth.uid &&
+                         isValidRoomChatMessage(incoming());
+
+        allow delete: if isSignedIn() &&
+                         isValidId(roomId) &&
+                         isValidId(messageId) &&
+                         (existing().senderUid == request.auth.uid ||
+                          get(/databases/$(database)/documents/rooms/$(roomId)).data.hostUid == request.auth.uid);
       }
     }
 

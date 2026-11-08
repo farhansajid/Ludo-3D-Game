@@ -2716,6 +2716,160 @@ object HowToPlayTutorialCatalog {
   }
 }
 
+// --- PRIVATE ROOM REAL-TIME TEXT CHAT, PROFANITY FILTER & QUICK-REPLY EMOJIS ---
+
+@IgnoreExtraProperties
+data class RoomChatMessage(
+  @DocumentId val id: String = "",
+  val roomCode: String = "",
+  val senderUid: String = "",
+  val senderName: String = "",
+  val senderColor: String = "RED",
+  val messageText: String = "",
+  val quickEmoji: String = "",
+  val wasFiltered: Boolean = false,
+  @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+data class QuickReplyChatOption(
+  val id: String,
+  val emoji: String,
+  val shortLabel: String,
+  val messageText: String
+) {
+  val phrase: String
+    get() = shortLabel
+}
+
+data class ChatSanitizeResult(
+  val sanitizedText: String,
+  val wasFiltered: Boolean,
+  val matchedWordsCount: Int
+) {
+  val cleanedText: String
+    get() = sanitizedText
+  val filteredWordCount: Int
+    get() = matchedWordsCount
+}
+
+object PrivateRoomChatCatalog {
+  private val PROFANITY_PATTERNS: List<Regex> = listOf(
+    Regex("""\bf+[\W_]*[u@*0]+[\W_]*c+[\W_]*k+(?:i*n*g*|e*r*|s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bs+[\W_]*h+[\W_]*[i1!*]+[\W_]*t+(?:t*y*|s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bb+[\W_]*u+[\W_]*l+[\W_]*s+[\W_]*h+[\W_]*[i1!*]+[\W_]*t+\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bb+[\W_]*[i1!*]+[\W_]*t+[\W_]*c+[\W_]*h+(?:e*s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\ba+[\W_]*s+[\W_]*s+[\W_]*h+[\W_]*o+[\W_]*l+[\W_]*e+(?:s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bb+[\W_]*a+[\W_]*s+[\W_]*t+[\W_]*a+[\W_]*r+[\W_]*d+(?:s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bd+[\W_]*[i1!*]+[\W_]*c+[\W_]*k+(?:s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bd+[\W_]*a+[\W_]*m+[\W_]*n+\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bc+[\W_]*r+[\W_]*a+[\W_]*p+\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bi+[\W_]*d+[\W_]*i+[\W_]*o+[\W_]*t+(?:s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bs+[\W_]*t+[\W_]*u+[\W_]*p+[\W_]*i+[\W_]*d+\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bn+[\W_]*o+[\W_]*o+[\W_]*b+(?:s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bl+[\W_]*o+[\W_]*s+[\W_]*e+[\W_]*r+(?:s*)?\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bw+[\W_]*t+[\W_]*f+\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bs+[\W_]*t+[\W_]*f+[\W_]*u+\b""", RegexOption.IGNORE_CASE)
+  )
+
+  val QUICK_REPLY_OPTIONS: List<QuickReplyChatOption> = listOf(
+    QuickReplyChatOption(
+      id = "qr_good_roll",
+      emoji = "🎲",
+      shortLabel = "Good Roll!",
+      messageText = "🎲 Good roll! Dual-dice luck is on fire!"
+    ),
+    QuickReplyChatOption(
+      id = "qr_what_a_move",
+      emoji = "🔥",
+      shortLabel = "Great Move!",
+      messageText = "🔥 What a tactical move!"
+    ),
+    QuickReplyChatOption(
+      id = "qr_blockade",
+      emoji = "🛡️",
+      shortLabel = "Blockade!",
+      messageText = "🛡️ Nice Golden Blockade shield!"
+    ),
+    QuickReplyChatOption(
+      id = "qr_close_call",
+      emoji = "😅",
+      shortLabel = "Close Call!",
+      messageText = "😅 Phew, that was a close call on the outer track!"
+    ),
+    QuickReplyChatOption(
+      id = "qr_roll_six",
+      emoji = "⚡",
+      shortLabel = "Need a 6!",
+      messageText = "⚡ Manifesting a 6 on Die #1 or Die #2!"
+    ),
+    QuickReplyChatOption(
+      id = "qr_gg",
+      emoji = "👑",
+      shortLabel = "GG WP!",
+      messageText = "👑 GG Well Played everyone!"
+    )
+  )
+
+  fun sanitizeMessage(rawInput: String): ChatSanitizeResult {
+    var working = rawInput.trim().take(240)
+    if (working.isBlank()) {
+      return ChatSanitizeResult(sanitizedText = "", wasFiltered = false, matchedWordsCount = 0)
+    }
+    var matchCount = 0
+    for (pattern in PROFANITY_PATTERNS) {
+      val matches = pattern.findAll(working).count()
+      if (matches > 0) {
+        matchCount += matches
+        working = pattern.replace(working) { matchResult ->
+          "*".repeat(matchResult.value.length.coerceIn(3, 6))
+        }
+      }
+    }
+    return ChatSanitizeResult(
+      sanitizedText = working,
+      wasFiltered = matchCount > 0,
+      matchedWordsCount = matchCount
+    )
+  }
+
+  fun buildInitialShowcaseMessages(roomCode: String, hostName: String = "Tariq Al-Mansoor"): List<RoomChatMessage> {
+    val cleanCode = roomCode.trim().uppercase().ifBlank { "PRV409" }
+    return listOf(
+      RoomChatMessage(
+        id = "seed_${cleanCode}_1",
+        roomCode = cleanCode,
+        senderUid = "host_seed_1",
+        senderName = hostName,
+        senderColor = "RED",
+        messageText = "Welcome to Private Room #$cleanCode! SafeChat profanity filter is active.",
+        quickEmoji = "👑",
+        wasFiltered = false
+      ),
+      RoomChatMessage(
+        id = "seed_${cleanCode}_2",
+        roomCode = cleanCode,
+        senderUid = "peer_seed_2",
+        senderName = "Duchess Katerina",
+        senderColor = "GREEN",
+        messageText = "🎲 Good roll! Choosing Die #2 first to land on the Safe Star!",
+        quickEmoji = "🎲",
+        wasFiltered = false
+      ),
+      RoomChatMessage(
+        id = "seed_${cleanCode}_3",
+        roomCode = cleanCode,
+        senderUid = "peer_seed_3",
+        senderName = "Archon AI",
+        senderColor = "YELLOW",
+        messageText = "🛡️ Nice Golden Blockade shield! Let's see your sequential 2nd die move.",
+        quickEmoji = "🛡️",
+        wasFiltered = false
+      )
+    )
+  }
+}
+
+
 
 
 
